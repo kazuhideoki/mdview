@@ -41,7 +41,7 @@ mdview hook uninstall
 
 Reader では `R` / `C` / `D` で `Read` / `Changes` / `Raw diff` を直接切り替えられます。表示モードのボタンにフォーカスがある場合は `←` / `→` でも移動できます。入力欄や検索パレットの操作中は、これらの単キーショートカットは反応しません。`Cmd+K` または `/` で検索パレットを開き、`mdview list` に表示される全文書をタイトル・リポジトリ・ブランチ・パスから検索できます。
 
-キャッシュは `~/Library/Caches/mdview/v1`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。配信サーバーは `127.0.0.1:4320` のみで待ち受け、キャッシュ配下以外は公開しません。health 応答には互換性確認用のプロトコル版を含めます。
+キャッシュは `~/Library/Caches/mdview/v1`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。Reader のJS、CSS、Mermaidは内容ハッシュ付きのアセットとして保存し、この版で生成した各HTMLが生成時のバージョンを固定参照します。異なるmdviewバージョンが同じキャッシュを使っても、この版で生成したページのアセットは上書きされません。従来名のアセットを参照する古いHTMLは、再描画するとこの形式へ移行します。配信サーバーは `127.0.0.1:4320` のみで待ち受け、キャッシュ配下以外は公開しません。health 応答には互換性確認用のプロトコル版を含めます。
 
 ## Hook の境界
 

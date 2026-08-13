@@ -36,7 +36,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const rendered = await renderDocument(tree, { changedLines });
   meta.changeCount = rendered.changeCount;
   meta.updatedLabel = options.updatedLabel || "Updated by Codex · just now";
-  const assetsDir = await ensureAssets();
+  const assets = await ensureAssets();
   await mkdir(outputDir, { recursive: true });
 
   const rawDiff = options.rawDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
@@ -47,7 +47,9 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     headings: rendered.headings,
     meta,
     rawDiff,
-    assets: relativeWebPath(outputDir, assetsDir),
+    assets: Object.fromEntries(
+      Object.entries(assets).map(([name, filePath]) => [name, relativeWebPath(outputDir, filePath)]),
+    ),
   });
   const revision = createHash("sha256")
     .update(`${catalogContext.renderedAt}\0${html}`)

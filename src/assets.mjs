@@ -1,4 +1,5 @@
-import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assetRoot } from "./paths.mjs";
@@ -9,24 +10,33 @@ const PROJECT_ROOT = path.resolve(SOURCE_ROOT, "..");
 export async function ensureAssets() {
   const target = assetRoot();
   await mkdir(target, { recursive: true });
-  await Promise.all([
-    atomicCopy(path.join(SOURCE_ROOT, "viewer.css"), path.join(target, "viewer.css")),
-    atomicCopy(path.join(SOURCE_ROOT, "viewer-entry.js"), path.join(target, "viewer.js")),
-    atomicCopy(path.join(PROJECT_ROOT, "node_modules", "mermaid", "dist", "mermaid.min.js"), path.join(target, "mermaid.min.js")),
+  const [stylesheet, viewerScript, mermaidScript] = await Promise.all([
+    publishAsset(path.join(SOURCE_ROOT, "viewer.css"), "viewer.css", target),
+    publishAsset(path.join(SOURCE_ROOT, "viewer-entry.js"), "viewer.js", target),
+    publishAsset(path.join(PROJECT_ROOT, "node_modules", "mermaid", "dist", "mermaid.min.js"), "mermaid.min.js", target),
   ]);
-  return target;
+  return { stylesheet, viewerScript, mermaidScript };
 }
 
-async function atomicCopy(source, target) {
+export async function publishAsset(source, logicalName, targetRoot = assetRoot()) {
   const sourceContents = await readFile(source);
+  const extension = path.extname(logicalName);
+  const stem = logicalName.slice(0, -extension.length);
+  const digest = createHash("sha256").update(sourceContents).digest("hex");
+  const target = path.join(targetRoot, `${stem}.${digest}${extension}`);
+  await mkdir(targetRoot, { recursive: true });
   let current;
   try {
     current = await readFile(target);
-  } catch {
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
     current = null;
   }
-  if (current?.equals(sourceContents)) return;
-  const temp = `${target}.${process.pid}.${Date.now()}.tmp`;
+  if (current) {
+    if (current.equals(sourceContents)) return target;
+    throw new Error(`Content-addressed asset mismatch: ${target}`);
+  }
+  const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await writeFile(temp, sourceContents, { mode: 0o644 });
     await rename(temp, target);
@@ -34,4 +44,5 @@ async function atomicCopy(source, target) {
     await unlink(temp).catch(() => {});
     throw error;
   }
+  return target;
 }

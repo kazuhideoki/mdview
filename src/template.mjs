@@ -43,7 +43,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
   <meta name="color-scheme" content="dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>${escape(title)} · mdview</title>
-  <link rel="stylesheet" href="${assets}/viewer.css">
+  <link rel="stylesheet" href="${assets.stylesheet}">
 </head>
 <body>
   <svg class="mdv-icon-sprite" aria-hidden="true">${iconSprite()}</svg>
@@ -111,8 +111,8 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
     </div>
     <div class="mdv-toast" role="status" aria-live="polite"></div>
   </div>
-  <script src="${assets}/mermaid.min.js"></script>
-  <script src="${assets}/viewer.js"></script>
+  <script src="${assets.mermaidScript}"></script>
+  <script src="${assets.viewerScript}"></script>
 </body>
 </html>`;
 }
