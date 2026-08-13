@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { readCatalog } from "./catalog.mjs";
+import { readDocumentHistory, restoreHistoryRenderedHtml } from "./history.mjs";
 import { cacheRoot, logPath, runtimeRoot, serverPort } from "./paths.mjs";
 
 const CONTENT_TYPES = new Map([
@@ -31,6 +32,24 @@ export async function startServer(options = {}) {
       if (pathname === "/__mdview/catalog") {
         const entries = (await readCatalog()).map(projectCatalogEntry);
         const body = `${JSON.stringify(entries)}\n`;
+        return respond(response, 200, request.method === "HEAD" ? "" : body, {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "content-length": Buffer.byteLength(body),
+        });
+      }
+      if (pathname.startsWith("/__mdview/history/")) {
+        const documentId = decodeURIComponent(pathname.slice("/__mdview/history/".length));
+        if (!/^[a-f0-9]{24}$/.test(documentId)) return respond(response, 404, "Not Found");
+        const history = await readDocumentHistory(documentId);
+        await Promise.all(history.revisions.map((revision) => restoreHistoryRenderedHtml(revision, {
+          documentId,
+          cacheRoot: root,
+        })));
+        const body = `${JSON.stringify({
+          documentId,
+          revisions: history.revisions.map(projectHistoryRevision),
+        })}\n`;
         return respond(response, 200, request.method === "HEAD" ? "" : body, {
           "content-type": "application/json; charset=utf-8",
           "cache-control": "no-store",
@@ -87,6 +106,17 @@ function projectCatalogEntry(entry) {
     href: entry.href,
     renderedAt: entry.renderedAt,
     source: entry.source,
+  };
+}
+
+function projectHistoryRevision(revision) {
+  return {
+    id: revision.id,
+    href: revision.href,
+    renderedAt: revision.renderedAt,
+    source: revision.source,
+    sessionId: revision.sessionId,
+    turnId: revision.turnId,
   };
 }
 

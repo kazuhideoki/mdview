@@ -2,8 +2,9 @@ const app = document.querySelector(".mdv-app");
 const rawDiff = document.querySelector(".mdv-raw-diff");
 const headings = [...document.querySelectorAll(".mdv-heading[id]")];
 const tocLinks = [...document.querySelectorAll(".mdv-toc a")];
-const changedBlocks = [...document.querySelectorAll(".mdv-document-body > [data-change='modified']")];
-const storageKey = `mdview:${location.pathname}`;
+const documentId = app?.dataset.documentId || "";
+const revisionId = app?.dataset.revisionId || "";
+const storageKey = documentId ? `mdview:document:${documentId}` : `mdview:${location.pathname}`;
 const searchOverlay = document.querySelector("[data-search-overlay]");
 const searchInput = document.querySelector("#mdv-search-input");
 const searchResults = document.querySelector("#mdv-search-results");
@@ -15,7 +16,11 @@ const searchState = {
   controller: null,
   restoreFocus: null,
 };
-let currentChange = changedBlocks.length ? 0 : -1;
+const historyState = {
+  revisions: [],
+  currentIndex: -1,
+  loading: false,
+};
 
 for (const button of document.querySelectorAll("[data-view-target]")) {
   button.addEventListener("click", () => setView(button.dataset.viewTarget));
@@ -50,9 +55,10 @@ searchResults?.addEventListener("click", (event) => {
 if (matchMedia("(max-width: 760px)").matches) app?.classList.add("toc-hidden");
 syncTocState();
 restorePreferences();
-refreshChangeCounter();
+restoreRevisionNavigation();
 observeHeadings();
 renderDiagrams();
+loadHistory();
 
 function setView(view) {
   app.dataset.view = view;
@@ -79,11 +85,11 @@ async function runAction(button) {
     case "close-search":
       closeSearch();
       break;
-    case "previous-change":
-      goToChange(-1);
+    case "previous-revision":
+      navigateRevision(-1);
       break;
-    case "next-change":
-      goToChange(1);
+    case "next-revision":
+      navigateRevision(1);
       break;
     case "mark-read":
       app.classList.toggle("is-read");
@@ -150,6 +156,17 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "/" && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target)) {
     event.preventDefault();
     openSearch();
+    return;
+  }
+
+  const historyDirection = event.key.toLowerCase() === "n"
+    ? 1
+    : event.key.toLowerCase() === "p"
+      ? -1
+      : 0;
+  if (historyDirection && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target)) {
+    event.preventDefault();
+    navigateRevision(historyDirection);
     return;
   }
 
@@ -483,21 +500,129 @@ function trapSearchFocus(event) {
   }
 }
 
-function goToChange(direction) {
-  if (!changedBlocks.length) {
-    showToast("変更箇所はありません");
+async function loadHistory() {
+  const status = document.querySelector("[data-history-status]");
+  if (!documentId || !revisionId || historyState.loading) {
+    if (status) status.textContent = "履歴はありません";
     return;
   }
-  currentChange = (currentChange + direction + changedBlocks.length) % changedBlocks.length;
-  changedBlocks[currentChange].scrollIntoView({ block: "center", behavior: "smooth" });
-  refreshChangeCounter();
+  historyState.loading = true;
+  try {
+    const response = await fetch(`/__mdview/history/${encodeURIComponent(documentId)}`, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`history returned ${response.status}`);
+    const payload = await response.json();
+    historyState.revisions = normalizeHistory(payload);
+    historyState.currentIndex = historyState.revisions.findIndex((revision) => revision.id === revisionId);
+    if (historyState.currentIndex < 0) {
+      historyState.currentIndex = historyState.revisions.findIndex((revision) => revision.href === location.pathname);
+    }
+    refreshHistoryCursor();
+  } catch (error) {
+    historyState.revisions = [];
+    historyState.currentIndex = -1;
+    if (status) status.textContent = "履歴を読み込めませんでした";
+    console.error("mdview: history fetch failed", error);
+  } finally {
+    historyState.loading = false;
+  }
 }
 
-function refreshChangeCounter() {
-  const current = document.querySelector("[data-change-current]");
-  const total = document.querySelector("[data-change-total]");
-  if (current) current.textContent = changedBlocks.length ? String(currentChange + 1) : "0";
-  if (total) total.textContent = String(changedBlocks.length);
+function normalizeHistory(payload) {
+  if (!Array.isArray(payload?.revisions)) return [];
+  return payload.revisions.map((value) => {
+    if (!value || typeof value !== "object" || !/^[a-f0-9]{24}$/.test(value.id)) return null;
+    const href = safeCatalogHref(value.href);
+    if (!href || !Number.isFinite(Date.parse(value.renderedAt))) return null;
+    return {
+      id: value.id,
+      href,
+      renderedAt: value.renderedAt,
+      source: stringValue(value.source),
+      sessionId: stringValue(value.sessionId),
+      turnId: stringValue(value.turnId),
+    };
+  }).filter(Boolean);
+}
+
+function refreshHistoryCursor() {
+  const previous = document.querySelector('[data-action="previous-revision"]');
+  const next = document.querySelector('[data-action="next-revision"]');
+  const status = document.querySelector("[data-history-status]");
+  const current = historyState.revisions[historyState.currentIndex];
+  previous.disabled = historyState.currentIndex <= 0;
+  next.disabled = historyState.currentIndex < 0 || historyState.currentIndex >= historyState.revisions.length - 1;
+  if (!status) return;
+  if (!current) {
+    status.textContent = "履歴はありません";
+    return;
+  }
+  const source = current.source === "hook" || current.source === "codex-hook" ? "Codex" : "手動";
+  status.replaceChildren();
+  const position = document.createElement("strong");
+  position.textContent = `${historyState.currentIndex + 1} / ${historyState.revisions.length}`;
+  const detail = document.createElement("span");
+  detail.className = "mdv-history-detail";
+  const time = document.createElement("time");
+  time.dateTime = current.renderedAt;
+  time.textContent = formatHistoryTimestamp(current.renderedAt);
+  detail.append(document.createTextNode(" · "), time, document.createTextNode(` · ${source}`));
+  status.append(position, detail);
+}
+
+function navigateRevision(direction) {
+  const target = historyState.revisions[historyState.currentIndex + direction];
+  if (!target) {
+    showToast(historyState.loading ? "履歴を読み込んでいます" : direction < 0 ? "これが最初の版です" : "これが最新の版です");
+    return;
+  }
+  const headingId = currentHeadingId();
+  const scrollRange = Math.max(document.documentElement.scrollHeight - innerHeight, 1);
+  sessionStorage.setItem(`mdview:history-navigation:${documentId}`, JSON.stringify({
+    view: app.dataset.view,
+    scrollRatio: scrollY / scrollRange,
+    headingId,
+  }));
+  const hash = headingId ? `#${encodeURIComponent(headingId)}` : "";
+  location.assign(`${target.href}${hash}`);
+}
+
+function currentHeadingId() {
+  let current = "";
+  for (const heading of headings) {
+    if (heading.getBoundingClientRect().top > 130) break;
+    current = heading.id;
+  }
+  return current;
+}
+
+function restoreRevisionNavigation() {
+  if (!documentId) return;
+  let saved;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(`mdview:history-navigation:${documentId}`) || "null");
+  } catch {
+    return;
+  }
+  if (!saved || typeof saved !== "object") return;
+  if (["read", "changes", "raw"].includes(saved.view)) setView(saved.view);
+  if (!location.hash && Number.isFinite(saved.scrollRatio)) {
+    requestAnimationFrame(() => {
+      const scrollRange = Math.max(document.documentElement.scrollHeight - innerHeight, 0);
+      scrollTo({ top: scrollRange * Math.min(Math.max(saved.scrollRatio, 0), 1) });
+    });
+  }
+}
+
+function formatHistoryTimestamp(value) {
+  return new Intl.DateTimeFormat("ja-JP", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function applySetting(name, value, persist = true) {

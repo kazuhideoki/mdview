@@ -25,6 +25,10 @@ export function runtimeRoot() {
   return path.resolve(process.env.MDVIEW_RUNTIME_DIR || path.join(os.homedir(), "Library", "Application Support", "mdview"));
 }
 
+export function historyRoot() {
+  return path.join(runtimeRoot(), "history");
+}
+
 export function logPath() {
   return path.resolve(process.env.MDVIEW_LOG || path.join(os.homedir(), "Library", "Logs", "mdview", "mdview.log"));
 }

@@ -6,7 +6,16 @@ import { promisify } from "node:util";
 import { visit } from "unist-util-visit";
 import { ensureAssets } from "./assets.mjs";
 import { catalogEntryForSource, catalogEntryId, registerCatalogEntry } from "./catalog.mjs";
-import { documentMeta, parseMarkdown, rawDiffForFile } from "./document.mjs";
+import { changedLinesFromPatch, documentMeta, parseMarkdown, rawDiffBetweenFiles, rawDiffForFile } from "./document.mjs";
+import {
+  historyRevisionId,
+  historySnapshotPath,
+  markdownContentHash,
+  readDocumentHistory,
+  registerHistoryRevision,
+  storeHistoryRenderedHtml,
+  storeHistorySnapshot,
+} from "./history.mjs";
 import { catalogRoot, documentOutputPath, documentUrl } from "./paths.mjs";
 import { renderDocument } from "./render-document.mjs";
 import { pageTemplate } from "./template.mjs";
@@ -19,13 +28,46 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     ...(options.catalogContext || {}),
     renderedAt: options.catalogContext?.renderedAt || new Date().toISOString(),
   };
-  const fileStat = await stat(absolutePath);
+  const fileStat = options.sourceStat || await stat(absolutePath);
   if (!fileStat.isFile()) throw new Error(`Not a file: ${absolutePath}`);
   if (!/[.](?:md|markdown)$/i.test(absolutePath)) throw new Error(`Markdown file required: ${absolutePath}`);
 
-  const [markdown, detectedMeta] = await Promise.all([readFile(absolutePath, "utf8"), documentMeta(absolutePath)]);
+  const [markdown, detectedMeta] = await Promise.all([
+    options.sourceContents ?? readFile(absolutePath, "utf8"),
+    documentMeta(absolutePath),
+  ]);
   const meta = { ...detectedMeta, ...options.meta };
-  const changedLines = options.changedLines ?? meta.changedLines;
+  const documentId = catalogEntryId(absolutePath);
+  const contentHash = markdownContentHash(markdown);
+  const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
+  await storeHistorySnapshot(markdown, { ...historyOptions, contentHash });
+  const history = await readDocumentHistory(documentId, historyOptions);
+  const latestRevision = history.revisions.at(-1);
+  const hasTurnBaseline = Object.hasOwn(options, "beforeContentHash");
+  const beforeContentHash = hasTurnBaseline
+    ? options.beforeContentHash
+    : latestRevision?.contentHash ?? null;
+  let revisionDiff = options.rawDiff;
+  let changedLines = options.changedLines;
+  if (revisionDiff === undefined && (hasTurnBaseline || latestRevision)) {
+    const beforePath = beforeContentHash ? historySnapshotPath(beforeContentHash, historyOptions) : null;
+    const afterPath = options.sourceContents === undefined ? absolutePath : historySnapshotPath(contentHash, historyOptions);
+    revisionDiff = await rawDiffBetweenFiles(beforePath, afterPath, meta.relativePath);
+  }
+  if (changedLines === undefined) {
+    changedLines = revisionDiff === undefined ? meta.changedLines : changedLinesFromPatch(revisionDiff);
+  }
+  const revisionId = latestRevision?.contentHash === contentHash
+    ? latestRevision.id
+    : historyRevisionId({
+      documentId,
+      renderedAt: catalogContext.renderedAt,
+      contentHash,
+      sessionId: catalogContext.sessionId,
+      turnId: catalogContext.turnId,
+    });
+  meta.documentId = documentId;
+  meta.revisionId = revisionId;
   const documentPath = documentOutputPath(meta);
   const outputDir = path.dirname(documentPath);
   const tree = parseMarkdown(markdown);
@@ -39,7 +81,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const assetsDir = await ensureAssets();
   await mkdir(outputDir, { recursive: true });
 
-  const rawDiff = options.rawDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
+  const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
   const title = rendered.headings[0]?.text || path.basename(absolutePath);
   const html = pageTemplate({
     title,
@@ -49,21 +91,41 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     rawDiff,
     assets: relativeWebPath(outputDir, assetsDir),
   });
-  const revision = createHash("sha256")
-    .update(`${catalogContext.renderedAt}\0${html}`)
-    .digest("hex")
-    .slice(0, 16);
-  const outputPath = documentPath.replace(/[.]html$/i, `.${revision}.html`);
+  const outputPath = documentPath.replace(/[.]html$/i, `.${revisionId}.html`);
+  await storeHistoryRenderedHtml(documentId, revisionId, html, historyOptions);
   const commit = async () => {
     const incomingRenderedAt = catalogContext.renderedAt;
     const current = await catalogEntryForSource(absolutePath);
-    if (incomingRenderedAt) {
-      if (current && Date.parse(current.renderedAt) >= Date.parse(incomingRenderedAt)) {
-        return { catalogEntry: current, outputPath: outputPathForCatalogEntry(current) };
-      }
+    const currentOutputPath = current ? outputPathForCatalogEntry(current) : null;
+    const currentIsAvailable = currentOutputPath ? await isFile(currentOutputPath) : false;
+    const currentHistory = await readDocumentHistory(documentId, historyOptions);
+    if (current && currentIsAvailable && currentHistory.revisions.at(-1)?.contentHash === contentHash) {
+      return {
+        catalogEntry: current,
+        historyRevision: currentHistory.revisions.at(-1),
+        outputPath: currentOutputPath,
+      };
     }
     await atomicWrite(outputPath, html);
+    const historyResult = await registerHistoryRevision({
+      id: revisionId,
+      documentId,
+      sourcePath: absolutePath,
+      href: new URL(documentUrl(outputPath)).pathname,
+      renderedAt: catalogContext.renderedAt,
+      source: catalogContext.source || "manual",
+      sessionId: catalogContext.sessionId ?? null,
+      turnId: catalogContext.turnId ?? null,
+      beforeContentHash,
+      contentHash,
+    }, historyOptions);
     let catalogEntry;
+    const currentIsNewer = current
+      && currentIsAvailable
+      && Date.parse(current.renderedAt) >= Date.parse(incomingRenderedAt);
+    if (currentIsNewer) {
+      return { catalogEntry: current, historyRevision: historyResult.revision, outputPath };
+    }
     try {
       catalogEntry = await (options.registerCatalogEntry || registerCatalogEntry)({
         title,
@@ -75,13 +137,9 @@ export async function renderMarkdownFile(inputPath, options = {}) {
         catalogContext,
       });
     } catch (error) {
-      await unlink(outputPath).catch(() => {});
       throw error;
     }
-    if (current && current.href !== catalogEntry.href) {
-      await unlink(outputPathForCatalogEntry(current)).catch(() => {});
-    }
-    return { catalogEntry, outputPath };
+    return { catalogEntry, historyRevision: historyResult.revision, outputPath };
   };
   const published = await withDocumentLock(catalogEntryId(absolutePath), commit);
 
@@ -89,9 +147,19 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     outputPath: published.outputPath,
     url: documentUrl(published.outputPath),
     catalogEntry: published.catalogEntry,
+    historyRevision: published.historyRevision,
     meta,
     ...rendered,
   };
+}
+
+async function isFile(filePath) {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
 }
 
 function outputPathForCatalogEntry(entry) {
@@ -174,7 +242,7 @@ async function prepareLocalImages(tree, markdownPath, meta, outputDir) {
     if (canonical !== allowedRoot && !canonical.startsWith(`${allowedRoot}${path.sep}`)) continue;
     if (!(await stat(canonical)).isFile()) continue;
     const extension = path.extname(canonical).toLowerCase().replace(/[^.a-z0-9]/g, "");
-    const name = `${createHash("sha256").update(canonical).digest("hex").slice(0, 20)}${extension}`;
+    const name = `${createHash("sha256").update(await readFile(canonical)).digest("hex").slice(0, 20)}${extension}`;
     const assetDir = path.join(outputDir, "_assets");
     const target = path.join(assetDir, name);
     await mkdir(assetDir, { recursive: true });

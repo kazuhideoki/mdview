@@ -13,6 +13,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readCatalog, registerCatalogEntry } from "../src/catalog.mjs";
+import { readDocumentHistory, storeHistorySnapshot } from "../src/history.mjs";
 
 const CLI_PATH = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
 
@@ -165,6 +166,15 @@ test("Stop hook passes session and turn identity through the private worker job"
   assert.equal(entry.sessionId, "session-catalog");
   assert.equal(entry.turnId, "turn-catalog");
   assert.equal(entry.sourcePath, markdown);
+  const history = await readDocumentHistory(entry.id, { root: path.join(current.runtime, "history") });
+  assert.equal(history.revisions.length, 1);
+  assert.equal(history.revisions[0].sessionId, "session-catalog");
+  assert.equal(history.revisions[0].turnId, "turn-catalog");
+  assert.match(history.revisions[0].beforeContentHash, /^[a-f0-9]{64}$/);
+  const renderedPath = path.join(current.cache, ...new URL(entry.href, "http://mdview.local").pathname.split("/").filter(Boolean));
+  const renderedHtml = await readFile(renderedPath, "utf8");
+  assert.match(renderedHtml, /-# Before/);
+  assert.match(renderedHtml, /\+# After/);
 });
 
 test("a failed hook worker retains its job until a successful retry", async (t) => {
@@ -216,6 +226,40 @@ test("a hook worker renders without starting the server or opening a browser", a
   assert.equal((await readCatalog({ root: current.cache }))[0].sourcePath, markdown);
   assert.match(await readFile(current.environment.MDVIEW_HOOK_LOG, "utf8"), /available from mdview/);
   await assert.rejects(access(jobPath), { code: "ENOENT" });
+});
+
+test("a delayed hook worker renders the captured snapshot instead of newer live contents", async (t) => {
+  const current = await fixture(t);
+  const jobs = path.join(current.runtime, "jobs");
+  const jobPath = path.join(jobs, "captured.json");
+  const markdown = path.join(current.workspace, "captured.md");
+  const before = "# Before\n";
+  const captured = "# Captured turn\n";
+  await mkdir(jobs, { recursive: true });
+  await writeFile(markdown, "# Newer live contents\n");
+  const beforeSnapshot = await storeHistorySnapshot(before, { root: path.join(current.runtime, "history") });
+  const capturedSnapshot = await storeHistorySnapshot(captured, { root: path.join(current.runtime, "history") });
+  await writeFile(jobPath, `${JSON.stringify({
+    version: 3,
+    changes: [{
+      filePath: markdown,
+      beforeContentHash: beforeSnapshot.contentHash,
+      contentHash: capturedSnapshot.contentHash,
+    }],
+    sessionId: "captured-session",
+    turnId: "captured-turn",
+    renderedAt: "2026-08-13T10:00:00.000Z",
+  })}\n`);
+
+  const result = await runCli(["--hook-worker", jobPath], current.environment);
+  assert.equal(result.code, 0, result.stderr);
+  const [entry] = await readCatalog({ root: current.cache });
+  const renderedPath = path.join(current.cache, ...new URL(entry.href, "http://mdview.local").pathname.split("/").filter(Boolean));
+  const renderedHtml = await readFile(renderedPath, "utf8");
+  assert.match(renderedHtml, /Captured turn/);
+  assert.doesNotMatch(renderedHtml, /Newer live contents/);
+  const history = await readDocumentHistory(entry.id, { root: path.join(current.runtime, "history") });
+  assert.equal(history.revisions[0].contentHash, capturedSnapshot.contentHash);
 });
 
 async function waitForCatalogEntry(root) {

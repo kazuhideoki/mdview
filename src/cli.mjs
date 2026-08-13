@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { readCatalog } from "./catalog.mjs";
 import { appendHookLog, runHookFromStdin } from "./hook-event.mjs";
 import { installHooks, hooksStatus, uninstallHooks } from "./hook-manager.mjs";
-import { renderMarkdownFile, renderMarkdownFiles } from "./renderer.mjs";
+import { readHistorySnapshot } from "./history.mjs";
+import { renderMarkdownFile } from "./renderer.mjs";
 import { ensureServer, startServer } from "./server.mjs";
 import { SAMPLE_META } from "./sample-document.mjs";
 import { logPath, runtimeRoot, serverPort } from "./paths.mjs";
@@ -157,20 +158,20 @@ async function hookCommand(args) {
 
 async function runAsHook() {
   await runHookFromStdin({
-    onChangedFiles: async ({ changedFiles }, payload) => launchHookWorker(changedFiles, payload),
+    onChangedFiles: async ({ changes }, payload) => launchHookWorker(changes, payload),
   });
   return 0;
 }
 
-async function launchHookWorker(changedFiles, payload) {
+async function launchHookWorker(changes, payload) {
   const jobsDir = path.join(runtimeRoot(), "jobs");
   const log = logPath();
   await mkdir(jobsDir, { recursive: true });
   await mkdir(path.dirname(log), { recursive: true });
   const jobPath = path.join(jobsDir, `${randomUUID()}.json`);
   await writeFile(jobPath, `${JSON.stringify({
-    version: 2,
-    changedFiles,
+    version: 3,
+    changes,
     sessionId: payload?.session_id,
     turnId: payload?.turn_id,
     renderedAt: new Date().toISOString(),
@@ -196,10 +197,17 @@ async function runHookWorker(jobPath) {
   const absoluteJobPath = path.resolve(jobPath || "");
   if (!absoluteJobPath.startsWith(`${jobsDir}${path.sep}`)) throw new Error("Invalid mdview hook worker job path.");
   const job = JSON.parse(await readFile(absoluteJobPath, "utf8"));
+  const legacy = job?.version === 2
+    && Array.isArray(job.changedFiles)
+    && job.changedFiles.every((file) => typeof file === "string");
+  const current = job?.version === 3
+    && Array.isArray(job.changes)
+    && job.changes.every((change) => change
+      && typeof change.filePath === "string"
+      && (change.beforeContentHash === null || /^[a-f0-9]{64}$/.test(change.beforeContentHash))
+      && /^[a-f0-9]{64}$/.test(change.contentHash));
   if (
-    job?.version !== 2 ||
-    !Array.isArray(job.changedFiles) ||
-    !job.changedFiles.every((file) => typeof file === "string") ||
+    (!legacy && !current) ||
     typeof job.sessionId !== "string" ||
     !job.sessionId ||
     typeof job.turnId !== "string" ||
@@ -209,15 +217,23 @@ async function runHookWorker(jobPath) {
   ) {
     throw new Error("Invalid mdview hook worker job.");
   }
-  const rendered = await renderMarkdownFiles(job.changedFiles, {
-    updatedLabel: "Updated by Codex · just now",
-    catalogContext: {
-      source: "hook",
-      sessionId: job.sessionId,
-      turnId: job.turnId,
-      renderedAt: job.renderedAt,
-    },
-  });
+  const changes = legacy
+    ? job.changedFiles.map((filePath) => ({ filePath }))
+    : job.changes;
+  const rendered = [];
+  for (const change of changes) {
+    const sourceContents = legacy ? undefined : await readHistorySnapshot(change.contentHash);
+    rendered.push(await renderMarkdownFile(change.filePath, {
+      ...(legacy ? {} : { beforeContentHash: change.beforeContentHash, sourceContents }),
+      updatedLabel: "Updated by Codex · just now",
+      catalogContext: {
+        source: "hook",
+        sessionId: job.sessionId,
+        turnId: job.turnId,
+        renderedAt: job.renderedAt,
+      },
+    }));
+  }
   if (rendered.length) {
     await appendHookLog(`Rendered ${rendered.length} Markdown file(s); available from mdview`);
   }
@@ -234,7 +250,7 @@ export async function openUrl(url, options = {}) {
 }
 
 function printHelp() {
-  process.stdout.write(`mdview — Codex-edited Markdown reader\n\nUsage:\n  mdview                     Open the latest rendered document\n  mdview list                List rendered documents, newest first\n  mdview open <number>       Open an entry shown by mdview list\n  mdview open <file.md>      Render and open a Markdown file\n  mdview <file.md>           Shortcut for mdview open <file.md>\n  mdview render <file.md>    Render without opening a browser\n  mdview demo\n  mdview serve\n  mdview hook <install|status|uninstall>\n\nReader shortcuts:\n  Cmd+K or /                 Search all documents shown by mdview list\n`);
+  process.stdout.write(`mdview — Codex-edited Markdown reader\n\nUsage:\n  mdview                     Open the latest rendered document\n  mdview list                List rendered documents, newest first\n  mdview open <number>       Open an entry shown by mdview list\n  mdview open <file.md>      Render and open a Markdown file\n  mdview <file.md>           Shortcut for mdview open <file.md>\n  mdview render <file.md>    Render without opening a browser\n  mdview demo\n  mdview serve\n  mdview hook <install|status|uninstall>\n\nReader shortcuts:\n  P                          Open the previous revision of this file\n  N                          Open the next revision of this file\n  Cmd+K or /                 Search all documents shown by mdview list\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

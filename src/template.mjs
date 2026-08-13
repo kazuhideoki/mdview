@@ -33,8 +33,6 @@ export function icon(name, label = "") {
 }
 
 export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDiff = "" }) {
-  const changedHeadings = headings.filter((heading) => heading.changed);
-  const changeCount = Math.max(meta.changeCount ?? 0, changedHeadings.length);
   return `<!doctype html>
 <html lang="ja">
 <head>
@@ -47,7 +45,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
 </head>
 <body>
   <svg class="mdv-icon-sprite" aria-hidden="true">${iconSprite()}</svg>
-  <div class="mdv-app" data-view="read" data-current-source="${escape(meta.sourcePath ?? meta.absolutePath ?? "")}" data-current-repo="${escape(meta.repo ?? "")}" data-current-branch="${escape(meta.branch ?? "")}" data-current-relative-path="${escape(meta.relativePath ?? "")}">
+  <div class="mdv-app" data-view="read" data-document-id="${escape(meta.documentId ?? "")}" data-revision-id="${escape(meta.revisionId ?? "")}" data-current-source="${escape(meta.sourcePath ?? meta.absolutePath ?? "")}" data-current-repo="${escape(meta.repo ?? "")}" data-current-branch="${escape(meta.branch ?? "")}" data-current-relative-path="${escape(meta.relativePath ?? "")}">
     <header class="mdv-topbar">
       <div class="mdv-context" title="${escape(meta.absolutePath ?? "")}">
         <span>${icon("folder-open-linear")}${escape(meta.repo)}</span><b>/</b>
@@ -83,10 +81,10 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
       <section class="mdv-raw-diff" aria-label="Raw diff" hidden><pre><code>${escape(rawDiff || "この文書には未コミットの差分がありません。")}</code></pre></section>
     </main>
     <footer class="mdv-reviewbar">
-      <div class="mdv-change-nav">
-        <button type="button" data-action="previous-change"${changeCount ? "" : " disabled"}>${icon("arrow-left-linear")}前の変更</button>
-        <span><b data-change-current>${changeCount ? 1 : 0}</b> / <b data-change-total>${changeCount}</b> 件の変更</span>
-        <button type="button" data-action="next-change"${changeCount ? "" : " disabled"}>次の変更${icon("arrow-right-linear")}</button>
+      <div class="mdv-history-nav" aria-label="同じファイルの変更履歴">
+        <button type="button" data-action="previous-revision" disabled>${icon("arrow-left-linear")}<kbd>P</kbd><span>前の版</span></button>
+        <span class="mdv-history-cursor" data-history-status aria-live="polite">履歴を読み込み中…</span>
+        <button type="button" data-action="next-revision" disabled><span>次の版</span><kbd>N</kbd>${icon("arrow-right-linear")}</button>
       </div>
       <button class="mdv-mark-read" type="button" data-action="mark-read">${icon("check-read-linear")}既読にする</button>
     </footer>

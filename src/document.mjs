@@ -18,6 +18,50 @@ async function git(args, cwd) {
   }
 }
 
+export async function rawDiffBetweenFiles(beforePath, afterPath, relativePath) {
+  const args = ["diff", "--no-index", "--no-ext-diff", "--unified=3", "--", beforePath || "/dev/null", afterPath];
+  let patch = "";
+  try {
+    const { stdout } = await execFileAsync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    patch = stdout;
+  } catch (error) {
+    if (error?.code !== 1 || typeof error.stdout !== "string") throw error;
+    patch = error.stdout;
+  }
+  if (!patch) return "";
+  const portable = relativePath.split(path.sep).join("/");
+  return patch.split("\n").map((line) => {
+    if (line.startsWith("diff --git ")) return `diff --git a/${portable} b/${portable}`;
+    if (line.startsWith("--- ")) return beforePath ? `--- a/${portable}` : "--- /dev/null";
+    if (line.startsWith("+++ ")) return `+++ b/${portable}`;
+    return line;
+  }).join("\n").trimEnd();
+}
+
+export function changedLinesFromPatch(patch) {
+  const lines = new Set();
+  let currentLine = null;
+  for (const line of patch.split("\n")) {
+    const match = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+    if (match) {
+      currentLine = Number(match[1]);
+      continue;
+    }
+    if (currentLine === null || line.startsWith("\\")) continue;
+    if (line.startsWith("+")) {
+      lines.add(Math.max(currentLine, 1));
+      currentLine += 1;
+    } else if (line.startsWith("-")) {
+      lines.add(Math.max(currentLine, 1));
+    } else if (line.startsWith(" ")) {
+      currentLine += 1;
+    } else {
+      currentLine = null;
+    }
+  }
+  return [...lines].sort((left, right) => left - right);
+}
+
 export function parseMarkdown(markdown) {
   return parser.parse(markdown);
 }
@@ -86,17 +130,7 @@ export async function changedLinesForFile(filePath, repoRoot) {
     const unstaged = await git(["diff", "--unified=0", "--", relativePath], repoRoot);
     patch = [staged, unstaged].filter(Boolean).join("\n");
   }
-  const lines = new Set();
-  for (const line of patch.split("\n")) {
-    const match = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
-    if (!match) continue;
-    const start = Number(match[1]);
-    const count = Number(match[2] ?? "1");
-    for (let current = start; current < start + Math.max(count, 1); current += 1) {
-      lines.add(current);
-    }
-  }
-  return [...lines].sort((a, b) => a - b);
+  return changedLinesFromPatch(patch);
 }
 
 export async function rawDiffForFile(filePath, repoRoot) {

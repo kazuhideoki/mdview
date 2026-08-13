@@ -8,4 +8,6 @@ When implementing from a selected generated mock, treat that image as the source
 
 In the reading view, preserve Markdown's structural markers such as list bullets. Show change state only on top-level blocks with a restrained accent; do not layer decorative timeline dots or decorative `H` badges beside the document structure.
 
+In the reading view, navigate revisions of the same file instead of jumping between changed blocks. Use `N` for the next revision and `P` for the previous revision, with a restrained history cursor that helps readers follow Codex editing history.
+
 Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.

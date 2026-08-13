@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { changedLinesFromPatch } from "../src/document.mjs";
+
+test("changed line parsing excludes unchanged diff context", () => {
+  const patch = [
+    "@@ -1,5 +1,5 @@",
+    " # Same heading",
+    " ",
+    "-Before",
+    "+After",
+    " ",
+    " Unchanged",
+  ].join("\n");
+  assert.deepEqual(changedLinesFromPatch(patch), [3]);
+});
 
 test("renders unique heading ids, GFM, highlighted code, and relative images outside the repo", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-"));
   const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
   const repo = path.join(root, "repo");
   const docs = path.join(repo, "docs");
   await mkdir(docs, { recursive: true });
@@ -19,6 +34,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
   try {
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?test=${Date.now()}`);
     const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
       changedLines: [1, 5],
       catalogContext: {
         renderedAt: "2026-08-13T10:00:00.000Z",
@@ -50,6 +66,8 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
       turnId: "turn-render",
     });
     assert.equal((await readdir(path.join(cache, "catalog"))).length, 1);
+    assert.match(html, new RegExp(`data-document-id="${result.catalogEntry.id}"`));
+    assert.equal(result.historyRevision.contentHash.length, 64);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -59,6 +77,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
 test("an older hook render cannot replace a newer document snapshot", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-order-"));
   const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
   const markdownPath = path.join(root, "ordered.md");
   await writeFile(markdownPath, "# Current source\n");
 
@@ -67,6 +86,7 @@ test("an older hook render cannot replace a newer document snapshot", async () =
   try {
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?order=${Date.now()}`);
     const newer = await renderMarkdownFile(markdownPath, {
+      historyRoot,
       meta: { repo: "order", branch: "main", relativePath: "ordered.md", repoRoot: root },
       catalogContext: {
         source: "hook",
@@ -78,6 +98,7 @@ test("an older hook render cannot replace a newer document snapshot", async () =
     const newerHtml = await readFile(newer.outputPath, "utf8");
 
     await renderMarkdownFile(markdownPath, {
+      historyRoot,
       meta: { repo: "order", branch: "main", relativePath: "ordered.md", repoRoot: root },
       catalogContext: {
         source: "hook",
@@ -102,6 +123,7 @@ test("an older hook render cannot replace a newer document snapshot", async () =
 test("a catalog publication failure leaves the previously published snapshot intact", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-publish-"));
   const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
   const markdownPath = path.join(root, "published.md");
   await writeFile(markdownPath, "# Published first\n");
 
@@ -110,6 +132,7 @@ test("a catalog publication failure leaves the previously published snapshot int
   try {
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?publish=${Date.now()}`);
     const first = await renderMarkdownFile(markdownPath, {
+      historyRoot,
       meta: { repo: "publish", branch: "main", relativePath: "published.md", repoRoot: root },
       catalogContext: { source: "manual", renderedAt: "2026-08-13T10:00:00.000Z" },
     });
@@ -117,6 +140,7 @@ test("a catalog publication failure leaves the previously published snapshot int
     await writeFile(markdownPath, "# Unpublished second\n");
 
     await assert.rejects(() => renderMarkdownFile(markdownPath, {
+      historyRoot,
       meta: { repo: "publish", branch: "main", relativePath: "published.md", repoRoot: root },
       catalogContext: { source: "manual", renderedAt: "2026-08-13T11:00:00.000Z" },
       registerCatalogEntry: async () => { throw new Error("injected catalog failure"); },
@@ -129,7 +153,81 @@ test("a catalog publication failure leaves the previously published snapshot int
     assert.equal(await readFile(first.outputPath, "utf8"), firstHtml);
     await access(first.outputPath);
     const publishedHtml = (await readdir(path.dirname(first.outputPath))).filter((name) => name.endsWith(".html"));
-    assert.deepEqual(publishedHtml, [path.basename(first.outputPath)]);
+    assert.equal(publishedHtml.length, 2);
+    assert.ok(publishedHtml.includes(path.basename(first.outputPath)));
+    const { readDocumentHistory } = await import(`../src/history.mjs?publish=${Date.now()}`);
+    assert.equal((await readDocumentHistory(first.catalogEntry.id, { root: historyRoot })).revisions.length, 2);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("keeps prior HTML and renders revision changes against the previous snapshot", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-history-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "history.md");
+  await writeFile(markdownPath, "# Before\n\nSame.\n");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?history=${Date.now()}`);
+    const first = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "history", branch: "main", relativePath: "history.md", repoRoot: root },
+      catalogContext: { source: "hook", sessionId: "session", turnId: "turn-1", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# After\n\nSame.\n");
+    const second = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "history", branch: "main", relativePath: "history.md", repoRoot: root },
+      catalogContext: { source: "hook", sessionId: "session", turnId: "turn-2", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    await access(first.outputPath);
+    await access(second.outputPath);
+    assert.notEqual(first.outputPath, second.outputPath);
+    const secondHtml = await readFile(second.outputPath, "utf8");
+    assert.match(secondHtml, /-# Before/);
+    assert.match(secondHtml, /\+# After/);
+    assert.match(secondHtml, /<h1[^>]*data-change="modified"/);
+    assert.match(secondHtml, /data-action="previous-revision"/);
+    assert.doesNotMatch(secondHtml, /previous-change/);
+    const { readDocumentHistory } = await import(`../src/history.mjs?history=${Date.now()}`);
+    const history = await readDocumentHistory(first.catalogEntry.id, { root: historyRoot });
+    assert.equal(history.revisions.length, 2);
+    assert.equal(history.revisions[1].beforeContentHash, history.revisions[0].contentHash);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("recreates a missing latest HTML cache without adding a duplicate revision", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-rehydrate-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "rehydrate.md");
+  await writeFile(markdownPath, "# Rehydrate\n");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?rehydrate=${Date.now()}`);
+    const first = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "rehydrate", branch: "main", relativePath: "rehydrate.md", repoRoot: root },
+      catalogContext: { source: "manual", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await unlink(first.outputPath);
+    const second = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "rehydrate", branch: "main", relativePath: "rehydrate.md", repoRoot: root },
+      catalogContext: { source: "manual", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    assert.equal(second.outputPath, first.outputPath);
+    await access(second.outputPath);
+    const { readDocumentHistory } = await import(`../src/history.mjs?rehydrate=${Date.now()}`);
+    assert.equal((await readDocumentHistory(first.catalogEntry.id, { root: historyRoot })).revisions.length, 1);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

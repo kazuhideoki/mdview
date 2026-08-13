@@ -25,8 +25,9 @@ async function fixture(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const cwd = path.join(directory, "workspace");
   const stateDir = path.join(directory, "state");
+  const historyRoot = path.join(directory, "history");
   await mkdir(cwd, { recursive: true });
-  return { directory, cwd, stateDir };
+  return { directory, cwd, stateDir, historyRoot };
 }
 
 function payload(cwd, eventName, overrides = {}) {
@@ -46,7 +47,7 @@ test("state is keyed by sha256(session_id + turn_id)", () => {
 });
 
 test("UserPromptSubmit preserves its first baseline; Stop detects and advances it", async (t) => {
-  const { cwd, stateDir } = await fixture(t);
+  const { cwd, stateDir, historyRoot } = await fixture(t);
   const docs = path.join(cwd, "docs");
   await mkdir(docs);
   await writeFile(path.join(cwd, "README.md"), "before\n");
@@ -55,15 +56,16 @@ test("UserPromptSubmit preserves its first baseline; Stop detects and advances i
   await writeFile(path.join(cwd, "node_modules", "ignored.md"), "ignored\n");
   const start = payload(cwd, "UserPromptSubmit");
 
-  assert.equal((await processHookEvent(start, { stateDir })).action, "baseline-created");
+  assert.equal((await processHookEvent(start, { stateDir, historyRoot })).action, "baseline-created");
   await writeFile(path.join(cwd, "README.md"), "after first prompt\n");
-  assert.equal((await processHookEvent(start, { stateDir })).action, "baseline-preserved");
+  assert.equal((await processHookEvent(start, { stateDir, historyRoot })).action, "baseline-preserved");
   await writeFile(path.join(docs, "new.md"), "new\n");
   await rm(path.join(docs, "old.markdown"));
 
   const callbacks = [];
   const stop = await processHookEvent(payload(cwd, "Stop"), {
     stateDir,
+    historyRoot,
     onChangedFiles: async (result, event) => callbacks.push({ result, event }),
   });
   assert.equal(stop.action, "compared");
@@ -74,6 +76,7 @@ test("UserPromptSubmit preserves its first baseline; Stop detects and advances i
 
   const repeated = await processHookEvent(payload(cwd, "Stop"), {
     stateDir,
+    historyRoot,
     onChangedFiles: async () => callbacks.push("unexpected"),
   });
   assert.deepEqual(repeated.changedFiles, []);
@@ -82,15 +85,15 @@ test("UserPromptSubmit preserves its first baseline; Stop detects and advances i
 });
 
 test("a Stop without a prompt establishes a baseline without reporting every document", async (t) => {
-  const { cwd, stateDir } = await fixture(t);
+  const { cwd, stateDir, historyRoot } = await fixture(t);
   await writeFile(path.join(cwd, "README.md"), "existing\n");
-  const result = await processHookEvent(payload(cwd, "Stop"), { stateDir });
+  const result = await processHookEvent(payload(cwd, "Stop"), { stateDir, historyRoot });
   assert.equal(result.action, "baseline-created");
   assert.deepEqual(result.changedFiles, []);
 });
 
 test("nullable payload fields and Japanese paths do not affect snapshotting", async (t) => {
-  const { directory, stateDir } = await fixture(t);
+  const { directory, stateDir, historyRoot } = await fixture(t);
   const cwd = path.join(directory, "日本 語 workspace");
   await mkdir(cwd);
   await writeFile(path.join(cwd, "設計 メモ.md"), "# 境界\n");
@@ -98,16 +101,16 @@ test("nullable payload fields and Japanese paths do not affect snapshotting", as
     transcript_path: null,
     model: "gpt-5",
   });
-  const result = await processHookEvent(event, { stateDir });
+  const result = await processHookEvent(event, { stateDir, historyRoot });
   assert.equal(result.action, "baseline-created");
   assert.equal(Object.keys(JSON.parse(await readFile(result.statePath, "utf8")).files)[0], "設計 メモ.md");
 });
 
 test("subagent UserPromptSubmit events are ignored before state is created", async (t) => {
-  const { cwd, stateDir } = await fixture(t);
+  const { cwd, stateDir, historyRoot } = await fixture(t);
   await writeFile(path.join(cwd, "README.md"), "hello\n");
   const event = payload(cwd, "UserPromptSubmit", { agent_id: "agent-2" });
-  const result = await processHookEvent(event, { stateDir });
+  const result = await processHookEvent(event, { stateDir, historyRoot });
   assert.deepEqual(result, {
     action: "ignored",
     reason: "subagent",
@@ -146,16 +149,16 @@ test("TTL cleanup removes only stale JSON states", async (t) => {
 });
 
 test("stdin runner accepts JSON without a trailing newline and writes nothing to stdout", async (t) => {
-  const { directory, cwd, stateDir } = await fixture(t);
+  const { directory, cwd, stateDir, historyRoot } = await fixture(t);
   await writeFile(path.join(cwd, "README.md"), "hello\n");
   const moduleUrl = new URL("../src/hook-event.mjs", import.meta.url).href;
   const logPath = path.join(directory, "hook.log");
   const code = [
     `import { runHookFromStdin } from ${JSON.stringify(moduleUrl)};`,
-    "await runHookFromStdin({ stateDir: process.env.MDVIEW_TEST_STATE, logPath: process.env.MDVIEW_TEST_LOG });",
+    "await runHookFromStdin({ stateDir: process.env.MDVIEW_TEST_STATE, historyRoot: process.env.MDVIEW_TEST_HISTORY, logPath: process.env.MDVIEW_TEST_LOG });",
   ].join("\n");
   const child = spawn(process.execPath, ["--input-type=module", "--eval", code], {
-    env: { ...process.env, MDVIEW_TEST_STATE: stateDir, MDVIEW_TEST_LOG: logPath },
+    env: { ...process.env, MDVIEW_TEST_STATE: stateDir, MDVIEW_TEST_HISTORY: historyRoot, MDVIEW_TEST_LOG: logPath },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const stdout = [];

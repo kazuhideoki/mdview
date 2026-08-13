@@ -16,6 +16,7 @@ import path from "node:path";
 import process from "node:process";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { storeHistorySnapshot } from "./history.mjs";
 
 const execFileAsync = promisify(execFile);
 const IGNORED_DIRECTORIES = new Set([
@@ -293,8 +294,11 @@ export async function processHookEvent(payload, options = {}) {
   await cleanupHookStates({ stateDir, now, ttlMs: options.ttlMs });
   const snapshot = await scanMarkdownFiles(payload.cwd);
   const filePath = hookStatePath(payload, { stateDir });
+  const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
 
   if (eventName === "UserPromptSubmit") {
+    const existing = await readState(filePath);
+    if (!existing) await persistSnapshotFiles(snapshot, Object.keys(snapshot.files), historyOptions);
     const created = await atomicWriteJson(filePath, stateRecord(snapshot, now), { createOnly: true });
     return {
       action: created ? "baseline-created" : "baseline-preserved",
@@ -309,6 +313,7 @@ export async function processHookEvent(payload, options = {}) {
   const differences = previous
     ? compareSnapshots(previous.files, snapshot.files)
     : { changed: [], deleted: [] };
+  await persistSnapshotFiles(snapshot, differences.changed, historyOptions);
   await atomicWriteJson(filePath, stateRecord(snapshot, now, previous));
 
   const changedFiles = differences.changed.map((relativePath) => path.join(snapshot.root, relativePath));
@@ -321,11 +326,25 @@ export async function processHookEvent(payload, options = {}) {
     statePath: filePath,
     changedFiles,
     deletedFiles,
+    changes: differences.changed.map((relativePath) => ({
+      filePath: path.join(snapshot.root, relativePath),
+      beforeContentHash: previous?.files?.[relativePath] ?? null,
+      contentHash: snapshot.files[relativePath],
+    })),
   };
   if (changedFiles.length > 0 && typeof options.onChangedFiles === "function") {
     await options.onChangedFiles(result, payload);
   }
   return result;
+}
+
+async function persistSnapshotFiles(snapshot, relativePaths, historyOptions) {
+  for (const relativePath of relativePaths) {
+    const contentHash = snapshot.files[relativePath];
+    if (!contentHash) continue;
+    const markdown = await readFile(path.join(snapshot.root, relativePath), "utf8");
+    await storeHistorySnapshot(markdown, { ...historyOptions, contentHash });
+  }
 }
 
 // CLI-facing name. The function deliberately performs no stdout writes.
