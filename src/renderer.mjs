@@ -19,16 +19,20 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     ...(options.catalogContext || {}),
     renderedAt: options.catalogContext?.renderedAt || new Date().toISOString(),
   };
-  const fileStat = await stat(absolutePath);
+  const fileStat = options.sourceStat || await stat(absolutePath);
   if (!fileStat.isFile()) throw new Error(`Not a file: ${absolutePath}`);
   if (!/[.](?:md|markdown)$/i.test(absolutePath)) throw new Error(`Markdown file required: ${absolutePath}`);
 
-  const [markdown, detectedMeta] = await Promise.all([readFile(absolutePath, "utf8"), documentMeta(absolutePath)]);
+  const [markdown, detectedMeta] = await Promise.all([
+    options.sourceContents ?? readFile(absolutePath, "utf8"),
+    documentMeta(absolutePath),
+  ]);
   const meta = { ...detectedMeta, ...options.meta };
   const changedLines = options.changedLines ?? meta.changedLines;
   const documentPath = documentOutputPath(meta);
   const outputDir = path.dirname(documentPath);
   const tree = parseMarkdown(markdown);
+  rewriteLocalMarkdownLinks(tree, absolutePath);
   await Promise.all([
     prepareLocalImages(tree, absolutePath, meta, outputDir),
     prepareD2Diagrams(tree, outputDir),
@@ -94,6 +98,40 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     meta,
     ...rendered,
   };
+}
+
+export function rewriteLocalMarkdownLinks(tree, sourcePath) {
+  const sourceId = catalogEntryId(sourcePath);
+  visit(tree, "link", (node) => {
+    const target = localMarkdownTarget(node.url);
+    if (!target) return;
+    const params = new URLSearchParams({ target: target.path });
+    if (target.fragment) params.set("fragment", target.fragment);
+    node.url = `/__mdview/follow/${sourceId}?${params}`;
+  });
+}
+
+function localMarkdownTarget(value) {
+  if (typeof value !== "string" || !value || value.startsWith("#")) return null;
+  const hashIndex = value.indexOf("#");
+  const targetPath = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
+  const fragment = hashIndex >= 0 ? value.slice(hashIndex + 1) : "";
+  if (
+    !targetPath ||
+    targetPath.includes("?") ||
+    targetPath.startsWith("/") ||
+    targetPath.startsWith("//") ||
+    /^[a-z][a-z0-9+.-]*:/i.test(targetPath)
+  ) return null;
+  if (/%(?:2f|5c)/i.test(targetPath)) return null;
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(targetPath);
+  } catch {
+    return null;
+  }
+  if (!/[.](?:md|markdown)$/i.test(decodedPath)) return null;
+  return { path: targetPath, fragment };
 }
 
 function outputPathForCatalogEntry(entry) {
