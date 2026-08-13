@@ -6,7 +6,7 @@ Before making substantial visual changes, use the Product Design plugin's `get-c
 
 When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
 
-In the reading view, preserve Markdown's structural markers such as list bullets. Show change state only on top-level blocks with a restrained accent; do not layer decorative timeline dots or decorative `H` badges beside the document structure.
+In the reading view, preserve Markdown's structural markers such as list bullets and present the document as ordinary reading material. Do not show change-state accents, markers, labels, timeline dots, or decorative `H` badges; keep change indicators in Changes view.
 
 In the reading view, navigate revisions of the same file instead of jumping between changed blocks. Use `N` for the next revision and `P` for the previous revision, with a restrained history cursor that helps readers follow Codex editing history.
 
