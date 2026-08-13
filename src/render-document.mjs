@@ -4,20 +4,30 @@ import { collectHeadings, collectInlineText, createSlugger, rangeHasChange } fro
 
 const SHIKI_THEME = "vitesse-dark";
 
-export async function renderDocument(tree, { changedLines = [] } = {}) {
+export async function renderDocument(tree, { changedLines = [], diffLines = [], diffKind = null, idPrefix = "" } = {}) {
   const headings = collectHeadings(tree);
   const changedLineSet = new Set(changedLines);
-  const state = { headingIndex: 0, changedLineSet, nextSlug: createSlugger() };
+  const diffLineSet = new Set(diffLines);
+  const state = { headingIndex: 0, changedLineSet, diffLineSet, diffKind, idPrefix, nextSlug: createSlugger() };
   const blocks = [];
   let changeCount = 0;
 
   for (const node of tree.children ?? []) {
-    if (rangeHasChange(node, changedLineSet)) changeCount += 1;
-    blocks.push(await renderNode(node, state));
+    const changed = rangeHasChange(node, changedLineSet);
+    const diffChanged = rangeHasChange(node, diffLineSet);
+    if (changed) changeCount += 1;
+    blocks.push({
+      html: await renderNode(node, state, true),
+      startLine: node.position?.start.line ?? 1,
+      endLine: node.position?.end.line ?? node.position?.start.line ?? 1,
+      changed,
+      diffChanged,
+    });
   }
 
   return {
-    html: blocks.join("\n"),
+    html: blocks.map((block) => block.html).join("\n"),
+    blocks,
     headings: headings.map((heading) => ({
       ...heading,
       changed: [...changedLineSet].some((line) => line >= heading.startLine && line <= heading.endLine),
@@ -26,9 +36,12 @@ export async function renderDocument(tree, { changedLines = [] } = {}) {
   };
 }
 
-async function renderNode(node, state) {
+async function renderNode(node, state, topLevel = false) {
   const changed = rangeHasChange(node, state.changedLineSet);
   const changeAttr = changed ? ' data-change="modified"' : "";
+  const diffAttr = topLevel && state.diffKind && rangeHasChange(node, state.diffLineSet)
+    ? ` data-diff-kind="${state.diffKind}"`
+    : "";
   const sourceAttrs = node.position
     ? ` data-source-start="${node.position.start.line}" data-source-end="${node.position.end.line}"`
     : "";
@@ -36,24 +49,24 @@ async function renderNode(node, state) {
   switch (node.type) {
     case "heading": {
       const title = collectInlineText(node);
-      const id = state.nextSlug(title, state.headingIndex);
+      const id = `${state.idPrefix}${state.nextSlug(title, state.headingIndex)}`;
       state.headingIndex += 1;
-      return `<h${node.depth} id="${id}" class="mdv-heading"${changeAttr}${sourceAttrs}>${await renderInlineChildren(node.children ?? [], state)}</h${node.depth}>`;
+      return `<h${node.depth} id="${id}" class="mdv-heading"${changeAttr}${diffAttr}${sourceAttrs}>${await renderInlineChildren(node.children ?? [], state)}</h${node.depth}>`;
     }
     case "paragraph":
-      return `<p class="mdv-block mdv-paragraph"${changeAttr}${sourceAttrs}>${await renderInlineChildren(node.children ?? [], state)}</p>`;
+      return `<p class="mdv-block mdv-paragraph"${changeAttr}${diffAttr}${sourceAttrs}>${await renderInlineChildren(node.children ?? [], state)}</p>`;
     case "blockquote":
-      return `<blockquote class="mdv-block mdv-blockquote"${changeAttr}${sourceAttrs}>${await renderChildren(node.children ?? [], state)}</blockquote>`;
+      return `<blockquote class="mdv-block mdv-blockquote"${changeAttr}${diffAttr}${sourceAttrs}>${await renderChildren(node.children ?? [], state)}</blockquote>`;
     case "list": {
       const tag = node.ordered ? "ol" : "ul";
       const start = node.ordered && node.start && node.start !== 1 ? ` start="${node.start}"` : "";
-      return `<${tag} class="mdv-block mdv-list"${start}${changeAttr}${sourceAttrs}>${await renderChildren(node.children ?? [], state)}</${tag}>`;
+      return `<${tag} class="mdv-block mdv-list"${start}${changeAttr}${diffAttr}${sourceAttrs}>${await renderChildren(node.children ?? [], state)}</${tag}>`;
     }
     case "listItem":
       return `<li${typeof node.checked === "boolean" ? ' class="mdv-task-item"' : ""}>${typeof node.checked === "boolean" ? `<input type="checkbox" disabled${node.checked ? " checked" : ""}>` : ""}${await renderChildren(node.children ?? [], state)}</li>`;
     case "code": {
       if (node.lang === "mermaid" || node.lang === "d2") {
-        return renderDiagram(node, changeAttr, sourceAttrs);
+        return renderDiagram(node, changeAttr, diffAttr, sourceAttrs);
       }
       const language = normalizeLanguage(node.lang);
       let highlighted;
@@ -64,23 +77,23 @@ async function renderNode(node, state) {
       }
       const lines = node.value.split("\n").length;
       const collapsible = lines > 12 ? " data-collapsible=\"true\"" : "";
-      return `<figure class="mdv-block mdv-code"${changeAttr}${sourceAttrs}${collapsible}>
+      return `<figure class="mdv-block mdv-code"${changeAttr}${diffAttr}${sourceAttrs}${collapsible}>
         <figcaption><span>${escape(node.lang || "text")}</span><span class="mdv-code-actions"><button type="button" data-action="toggle-code">折りたたむ</button><button type="button" data-action="copy-code">コピー</button></span></figcaption>
         ${highlighted}
       </figure>`;
     }
     case "table": {
       const [head, ...body] = node.children ?? [];
-      return `<div class="mdv-block mdv-table-wrap"${changeAttr}${sourceAttrs}><table class="mdv-table"><thead>${head ? await renderTableRow(head, state, true, node.align) : ""}</thead><tbody>${(await Promise.all(body.map((row) => renderTableRow(row, state, false, node.align)))).join("")}</tbody></table></div>`;
+      return `<div class="mdv-block mdv-table-wrap"${changeAttr}${diffAttr}${sourceAttrs}><table class="mdv-table"><thead>${head ? await renderTableRow(head, state, true, node.align) : ""}</thead><tbody>${(await Promise.all(body.map((row) => renderTableRow(row, state, false, node.align)))).join("")}</tbody></table></div>`;
     }
     case "tableRow":
       return `<tr>${await renderChildren(node.children ?? [], state)}</tr>`;
     case "tableCell":
       return `<td>${await renderInlineChildren(node.children ?? [], state)}</td>`;
     case "thematicBreak":
-      return `<hr class="mdv-separator"${sourceAttrs}>`;
+      return `<hr class="mdv-separator"${diffAttr}${sourceAttrs}>`;
     case "html":
-      return `<pre class="mdv-block mdv-raw-html"${sourceAttrs}><code>${escape(node.value)}</code></pre>`;
+      return `<pre class="mdv-block mdv-raw-html"${diffAttr}${sourceAttrs}><code>${escape(node.value)}</code></pre>`;
     default:
       return renderInline(node, state);
   }
@@ -126,7 +139,7 @@ async function renderInline(node, state) {
   }
 }
 
-function renderDiagram(node, changeAttr, sourceAttrs) {
+function renderDiagram(node, changeAttr, diffAttr, sourceAttrs) {
   const source = escape(node.value);
   const engine = escape(node.lang);
   const stage = node.lang === "d2"
@@ -134,7 +147,7 @@ function renderDiagram(node, changeAttr, sourceAttrs) {
       ? `<img src="${escape(node.data.mdviewDiagramUrl)}" alt="D2 diagram">`
       : '<p class="mdv-diagram-error">D2 を描画できませんでした。ソースを確認してください。</p>'
     : '<div class="mdv-diagram-loading">図を描画中…</div>';
-  return `<figure class="mdv-block mdv-diagram" data-engine="${engine}"${changeAttr}${sourceAttrs}>
+  return `<figure class="mdv-block mdv-diagram" data-engine="${engine}"${changeAttr}${diffAttr}${sourceAttrs}>
     <figcaption><span>${engine}</span><button type="button" data-action="toggle-diagram-source">ソースを表示</button></figcaption>
     <div class="mdv-diagram-stage" data-diagram-source="${Buffer.from(node.value).toString("base64")}">${stage}</div>
     <pre class="mdv-diagram-source" hidden><code>${source}</code></pre>

@@ -62,6 +62,56 @@ export function changedLinesFromPatch(patch) {
   return [...lines].sort((left, right) => left - right);
 }
 
+export function lineChangesFromPatch(patch) {
+  const addedLines = [];
+  const removedLines = [];
+  const hunks = [];
+  let currentHunk = null;
+  let oldLine = null;
+  let newLine = null;
+
+  for (const line of patch.split("\n")) {
+    const match = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (match) {
+      oldLine = Number(match[1]);
+      newLine = Number(match[3]);
+      currentHunk = {
+        oldStart: oldLine,
+        oldCount: Number(match[2] ?? 1),
+        newStart: newLine,
+        newCount: Number(match[4] ?? 1),
+        addedLines: [],
+        addedAt: [],
+        removedLines: [],
+        removedAt: [],
+      };
+      hunks.push(currentHunk);
+      continue;
+    }
+    if (!currentHunk || line.startsWith("\\")) continue;
+    if (line.startsWith("+")) {
+      currentHunk.addedLines.push(newLine);
+      currentHunk.addedAt.push({ oldLine, newLine });
+      addedLines.push(newLine);
+      newLine += 1;
+    } else if (line.startsWith("-")) {
+      currentHunk.removedLines.push(oldLine);
+      currentHunk.removedAt.push({ oldLine, newLine });
+      removedLines.push(oldLine);
+      oldLine += 1;
+    } else if (line.startsWith(" ")) {
+      oldLine += 1;
+      newLine += 1;
+    } else {
+      currentHunk = null;
+      oldLine = null;
+      newLine = null;
+    }
+  }
+
+  return { addedLines, removedLines, hunks };
+}
+
 export function parseMarkdown(markdown) {
   return parser.parse(markdown);
 }

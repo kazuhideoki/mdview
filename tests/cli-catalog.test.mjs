@@ -120,6 +120,25 @@ test("open file and direct Markdown path both record a manual catalog source", a
   }
 });
 
+test("demo renders two revisions and opens the inline Changes view", async (t) => {
+  const current = await fixture(t);
+  const result = await runCli(["demo"], current.environment);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /[?]view=changes\n$/);
+
+  const [entry] = await readCatalog({ root: current.cache });
+  const renderedPath = path.join(current.cache, ...new URL(entry.href, "http://mdview.local").pathname.split("/").filter(Boolean));
+  const renderedHtml = await readFile(renderedPath, "utf8");
+  assert.match(renderedHtml, /data-diff-kind="removed"/);
+  assert.match(renderedHtml, /data-diff-kind="added"/);
+  assert.match(renderedHtml, /デプロイ単位で定義します/);
+  assert.match(renderedHtml, /デプロイ単位かつ障害ドメインの単位で定義します/);
+
+  const history = await readDocumentHistory(entry.id, { root: path.join(current.runtime, "history") });
+  assert.equal(history.revisions.length, 2);
+  assert.equal(history.revisions[1].beforeContentHash, history.revisions[0].contentHash);
+});
+
 test("help documents history commands and reader search shortcuts", async (t) => {
   const current = await fixture(t);
   const result = await runCli(["--help"], current.environment);
