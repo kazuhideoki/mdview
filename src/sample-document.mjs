@@ -1,0 +1,41 @@
+export const SAMPLE_DOCUMENT = `# 実行プロセスの境界
+
+本章では、システムにおける実行プロセスの境界を定義し、プロセス間の責務分離と通信方法について説明します。境界は、障害の分離、スケーラビリティの確保、および変更容易性の向上を目的として設定されます。
+
+## 境界の定義
+
+実行プロセスの境界は、デプロイ単位かつ障害ドメインの単位で定義します。各プロセスは単一の責任を持ち、他プロセスとは明示的なインターフェースを介してのみ通信します。
+
+## プロセス間通信の原則
+
+通信は疎結合を原則とし、バージョン互換性を維持するために契約を明確に定義します。タイムアウト、リトライ、サーキットブレーカーを適切に設定し、障害の連鎖を防ぎます。
+
+\`\`\`typescript
+export interface ProcessBoundary {
+  id: string;
+  name: string;
+  responsibilities: string[];
+  endpoints: HttpEndpoint[];
+}
+\`\`\`
+
+| 境界 ID | プロセス名 | 主な責務 | 通信方式 | デプロイ単位 |
+| --- | --- | --- | --- | --- |
+| auth | 認証サービス | 認証・認可、トークン発行 | HTTP/JSON | 単一 Pod |
+| user | ユーザーサービス | ユーザー情報の管理 | HTTP/JSON | 単一 Pod |
+| billing | 請求サービス | 請求処理、決済連携 | キュー | 単一 Pod |
+
+## ライフサイクル
+
+起動、停止、再実行の各状態を明示し、外部から観測できる状態は派生情報として扱います。
+`;
+
+export const SAMPLE_META = {
+  repo: "reentry",
+  branch: "feat/domain-model",
+  relativePath: "doc/architecture.md",
+  displayPath: "reentry / feat/domain-model / doc/architecture.md",
+  updatedLabel: "Updated by Codex · 2 min ago",
+  changeCount: 12,
+  changedLines: [5, 6, 7, 8, 9],
+};

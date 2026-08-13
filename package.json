@@ -1,0 +1,30 @@
+{
+  "name": "mdview",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "render": "node src/cli.mjs render",
+    "demo": "node src/cli.mjs demo",
+    "check": "node --check src/cli.mjs && node --check src/catalog.mjs && node --check src/renderer.mjs && node --check src/render-document.mjs && node --check src/viewer-entry.js && node --check src/hook-event.mjs && node --check src/server.mjs && node --check src/hook-manager.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "preview": "vite preview",
+    "test:sites": "node --test tests/sites-worker.test.mjs"
+  },
+  "dependencies": {
+    "@iconify-json/solar": "^1.2.6",
+    "@vitejs/plugin-react": "5.0.4",
+    "html-escaper": "^3.0.3",
+    "mermaid": "^11.16.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "shiki": "^4.4.3",
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0",
+    "vite": "6.4.2"
+  }
+}

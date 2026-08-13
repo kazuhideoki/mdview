@@ -1,0 +1,51 @@
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  color: #e9e6df;
+  background: #121312;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+.developer-entry {
+  width: min(680px, calc(100% - 48px));
+  margin: 18vh auto 0;
+}
+
+.developer-entry h1 {
+  margin: 10px 0 22px;
+  font-size: clamp(44px, 8vw, 76px);
+  font-weight: 620;
+}
+
+.developer-entry p {
+  color: #b8bab5;
+  font-size: 18px;
+  line-height: 1.75;
+}
+
+.developer-entry code {
+  display: block;
+  margin: 30px 0;
+  padding: 17px 20px;
+  color: #54d7ef;
+  border: 1px solid #313330;
+  background: #171817;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.developer-entry .developer-kicker,
+.developer-entry .developer-note {
+  color: #7f827d;
+  font-size: 13px;
+  letter-spacing: .12em;
+}
