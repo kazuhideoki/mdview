@@ -175,6 +175,8 @@
   .mdv-table .align-right { text-align: right; }
   .mdv-table tr:last-child td { border-bottom: 0; }
   .mdv-table :is(th, td):last-child { border-right: 0; }
+  .mdv-table tr[data-diff-kind="removed"] { display: none; }
+  .mdv-table-diff-marker { display: inline-block; width: 1.35em; margin-left: -.35em; color: var(--mdv-diff-color); font: 750 .9em/1 var(--mdv-font-mono); }
   .mdv-diagram { position: relative; margin: 1.6em 0; border: 1px solid var(--mdv-border); background: var(--mdv-surface-code); }
   .mdv-diagram-stage { min-height: 220px; display: grid; place-items: center; padding: 22px; overflow: auto; }
   .mdv-diagram-stage svg { max-width: 100%; height: auto; }
@@ -200,6 +202,11 @@
   .mdv-app[data-view="changes"] .mdv-document-body > .mdv-paragraph[data-diff-kind] { padding: .18em .55em; margin-left: -.55em; }
   .mdv-app[data-view="changes"] .mdv-document-body > .mdv-heading[data-diff-kind] { padding: .08em .35em; margin-left: -.35em; }
   .mdv-app[data-view="changes"] .mdv-document-body > .mdv-list[data-diff-kind] { padding-top: .2em; padding-bottom: .2em; padding-right: .55em; }
+  .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] { display: table-row; --mdv-change-color: var(--mdv-diff-color); }
+  .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] > :is(th, td) { background: var(--mdv-diff-bg); }
+  .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] > :first-child { border-left: 2px solid var(--mdv-diff-color); }
+  .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="removed"] { --mdv-diff-color: var(--mdv-removed); --mdv-diff-bg: var(--mdv-removed-bg); }
+  .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="added"] { --mdv-diff-color: var(--mdv-added); --mdv-diff-bg: var(--mdv-added-bg); }
   .mdv-app[data-view="changes"] .mdv-heading[data-diff-kind]::after { display: none; }
   .mdv-app[data-view="raw"] .mdv-document { display: none; }
   .mdv-app[data-view="raw"] .mdv-raw-diff { display: block; }

@@ -289,6 +289,156 @@ test("shows structural paragraph changes when only the separating blank line cha
   }
 });
 
+test("renders a changed Markdown table as row-level changes in one table", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-table-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "tables.md");
+  const header = "| Boundary | Process | Transport |\n| --- | --- | --- |\n";
+  await writeFile(markdownPath, `${header}| auth | Authentication | HTTP/JSON |\n| user | Users | HTTP/JSON |\n| billing | Billing | Queue |\n`);
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?table-diff=${Date.now()}`);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "tables", branch: "main", relativePath: "tables.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, `${header}| auth | Authentication | HTTP/JSON |\n| user | Users | HTTP/JSON |\n| billing | Billing | Queue (async) |\n`);
+    const second = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "tables", branch: "main", relativePath: "tables.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(second.outputPath, "utf8");
+    assert.equal((html.match(/<table class="mdv-table">/g) ?? []).length, 1);
+    assert.match(html, /<tr[^>]*data-diff-kind="removed"[^>]*>.*削除行: <\/span>billing<\/td><td>Billing<\/td><td>Queue<\/td><\/tr>/);
+    assert.match(html, /<tr[^>]*data-diff-kind="added"[^>]*>.*追加行: <\/span>billing<\/td><td>Billing<\/td><td>Queue \(async\)<\/td><\/tr>/);
+    assert.equal((html.match(/<td>auth<\/td>/g) ?? []).length, 1);
+    assert.equal((html.match(/<td>user<\/td>/g) ?? []).length, 1);
+    assert.doesNotMatch(html, /mdv-table-wrap"[^>]*data-diff-kind/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("renders inserted and deleted Markdown table rows inside the current table", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-table-row-set-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "table-rows.md");
+  const header = "| ID | Value |\n| --- | --- |\n";
+  const base = `${header}| alpha | A |\n| gamma | C |\n`;
+  const inserted = `${header}| alpha | A |\n| beta | B |\n| gamma | C |\n`;
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?table-row-set=${Date.now()}`);
+    await writeFile(markdownPath, base);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "table-rows", branch: "main", relativePath: "table-rows.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, inserted);
+    const addition = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "table-rows", branch: "main", relativePath: "table-rows.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const additionHtml = await readFile(addition.outputPath, "utf8");
+    assert.equal((additionHtml.match(/<table class="mdv-table">/g) ?? []).length, 1);
+    assert.match(additionHtml, /data-diff-kind="added"[^>]*>.*追加行: <\/span>beta<\/td><td>B<\/td>/);
+    assert.doesNotMatch(additionHtml, /data-diff-kind="removed"/);
+
+    await writeFile(markdownPath, base);
+    const deletion = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "table-rows", branch: "main", relativePath: "table-rows.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T12:00:00.000Z" },
+    });
+    const deletionHtml = await readFile(deletion.outputPath, "utf8");
+    assert.equal((deletionHtml.match(/<table class="mdv-table">/g) ?? []).length, 1);
+    assert.match(deletionHtml, /data-diff-kind="removed"[^>]*>.*削除行: <\/span>beta<\/td><td>B<\/td>/);
+    assert.doesNotMatch(deletionHtml, /data-diff-kind="removed"[^>]*data-source-start/);
+    assert.doesNotMatch(deletionHtml, /data-diff-kind="added"/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("detects inline Markdown-only table row changes and pairs adjacent replacements", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-table-inline-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "inline-table.md");
+  const header = "| ID | Reference |\n| --- | --- |\n";
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?table-inline=${Date.now()}`);
+    await writeFile(markdownPath, `${header}| alpha | [Docs](old-alpha.md) |\n| beta | **Stable text** |\n`);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline-table", branch: "main", relativePath: "inline-table.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, `${header}| alpha | [Docs](new-alpha.md) |\n| beta | *Stable text* |\n`);
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline-table", branch: "main", relativePath: "inline-table.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.equal((html.match(/<table class="mdv-table">/g) ?? []).length, 1);
+    const rowKinds = [...html.matchAll(/<tr data-diff-kind="(removed|added)"/g)].map((match) => match[1]);
+    assert.deepEqual(rowKinds, ["removed", "added", "removed", "added"]);
+    assert.match(html, /target=old-alpha[.]md/);
+    assert.match(html, /target=new-alpha[.]md/);
+    assert.match(html, /<strong>Stable text<\/strong>/);
+    assert.match(html, /<em>Stable text<\/em>/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("falls back to whole-table changes when row or table matching is ambiguous", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-table-ambiguous-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "ambiguous.md");
+  const duplicateTable = (value) => `| ID | Value |\n| --- | --- |\n| same | ${value} |\n| same | ${value} |\n`;
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?table-ambiguous=${Date.now()}`);
+    await writeFile(markdownPath, duplicateTable("before"));
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "ambiguous", branch: "main", relativePath: "ambiguous.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, duplicateTable("after"));
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "ambiguous", branch: "main", relativePath: "ambiguous.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.equal((html.match(/<table class="mdv-table">/g) ?? []).length, 2);
+    assert.match(html, /mdv-table-wrap"[^>]*data-diff-kind="removed"/);
+    assert.match(html, /mdv-table-wrap"[^>]*data-diff-kind="added"/);
+    assert.doesNotMatch(html, /<tr data-diff-kind/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
 test("pairs a shortened paragraph without marking the following block", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-deletion-diff-"));
   const cache = path.join(root, "cache");
