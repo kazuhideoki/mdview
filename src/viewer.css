@@ -131,14 +131,15 @@
   h3.mdv-heading { font-size: 20px; }
   .mdv-document-body > .mdv-block[data-change="modified"]::before { content: ""; position: absolute; left: -20px; top: .25em; bottom: .25em; width: 2px; border-radius: 2px; background: var(--mdv-modified); }
   .mdv-paragraph { position: relative; margin: 0 0 1.18em; color: #d2d0c9; }
-  .mdv-document p:first-of-type { margin-bottom: 1.45em; color: #d8d5ce; font-size: 1.02em; }
+  .mdv-document-body > p:first-of-type { margin-bottom: 1.45em; color: #d8d5ce; font-size: 1.02em; }
   .mdv-document strong { color: #f0ede7; font-weight: 650; }
   .mdv-document em { color: #d8b766; }
   .mdv-document a { text-underline-offset: 3px; }
   .mdv-document img { max-width: 100%; height: auto; border-radius: 5px; }
   .mdv-inline-code { padding: .12em .35em; color: #d8b766; border: 1px solid #393a37; border-radius: 3px; background: #1b1c1b; font-family: var(--mdv-font-mono); font-size: .9em; }
   .mdv-list { position: relative; margin: .3em 0 1.5em; padding-left: 1.55em; color: #cdcbc5; }
-  .mdv-list li { padding-left: .25em; margin: .25em 0; }
+  .mdv-list li { padding-left: .25em; margin: 0; }
+  .mdv-list li > .mdv-paragraph { margin: 0; }
   .mdv-task-item { list-style: none; }
   .mdv-task-item > input { margin: 0 .7em 0 -1.55em; accent-color: var(--mdv-accent); }
   .mdv-blockquote { position: relative; margin: 1.5em 0; padding: 1px 0 1px 18px; color: #c4c6c0; border-left: 3px solid var(--mdv-accent-dim); }
