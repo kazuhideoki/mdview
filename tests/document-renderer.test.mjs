@@ -33,6 +33,9 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.match(html, /type="checkbox" disabled checked/);
     assert.match(html, /class="shiki/);
     assert.match(html, /src="[.]\/_assets\/[a-f0-9]+[.]png"/);
+    assert.match(html, /data-view-target="read"[^>]+aria-keyshortcuts="R"[^>]+title="Read \(R\)"/);
+    assert.match(html, /data-view-target="changes"[^>]+aria-keyshortcuts="C"[^>]+title="Changes \(C\)"/);
+    assert.match(html, /data-view-target="raw"[^>]+aria-keyshortcuts="D"[^>]+title="Raw diff \(D\)"/);
     assert.ok(result.outputPath.startsWith(cache));
     const copied = await readdir(path.join(path.dirname(result.outputPath), "_assets"));
     assert.equal(copied.length, 1);

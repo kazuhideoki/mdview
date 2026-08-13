@@ -126,6 +126,8 @@ test("help documents history commands and reader search shortcuts", async (t) =>
   assert.match(result.stdout, /mdview list/);
   assert.doesNotMatch(result.stdout, /mdview recent/);
   assert.match(result.stdout, /mdview open <number>/);
+  assert.match(result.stdout, /R \/ C \/ D[ ]+Switch to Read \/ Changes \/ Raw diff/);
+  assert.match(result.stdout, /Left \/ Right[ ]+Switch views/);
   assert.match(result.stdout, /Cmd\+K or \/[ ]+Search all documents shown by mdview list/);
 });
 
