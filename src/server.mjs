@@ -22,7 +22,7 @@ const CONTENT_TYPES = new Map([
   [".gif", "image/gif"],
   [".webp", "image/webp"],
 ]);
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 5;
 const followRenders = new Map();
 const execFileAsync = promisify(execFile);
 
@@ -88,13 +88,21 @@ export async function startServer(options = {}) {
         return respond(response, 404, "Not Found");
       }
       if (!canonical.startsWith(`${await realpath(allowedRoot)}${path.sep}`) || !(await stat(canonical)).isFile()) return respond(response, 404, "Not Found");
-      response.writeHead(200, {
-        "content-type": CONTENT_TYPES.get(path.extname(canonical).toLowerCase()) || "application/octet-stream",
+      const extension = path.extname(canonical).toLowerCase();
+      const headers = {
+        "content-type": CONTENT_TYPES.get(extension) || "application/octet-stream",
         "cache-control": canonical.endsWith("mermaid.min.js")
           ? "public, max-age=86400"
           : "no-cache",
         "x-content-type-options": "nosniff",
-      });
+      };
+      const requestedView = requestUrl.searchParams.get("view");
+      if (route === "documents" && extension === ".html" && isReaderView(requestedView)) {
+        const body = applyInitialView(await readFile(canonical, "utf8"), requestedView);
+        response.writeHead(200, { ...headers, "content-length": Buffer.byteLength(body) });
+        return response.end(request.method === "HEAD" ? "" : body);
+      }
+      response.writeHead(200, headers);
       if (request.method === "HEAD") return response.end();
       createReadStream(canonical).pipe(response);
     } catch (error) {
@@ -107,6 +115,50 @@ export async function startServer(options = {}) {
     server.listen(port, "127.0.0.1", resolve);
   });
   return server;
+}
+
+function isReaderView(view) {
+  return view === "read" || view === "changes" || view === "raw";
+}
+
+function applyInitialView(html, view) {
+  let foundApp = false;
+  const transformed = html.replace(/<(?:div|button|section)\b[^>]*>/g, (tag) => {
+    if (tag.startsWith("<div") && hasClass(tag, "mdv-app")) {
+      foundApp = true;
+      return setHtmlAttribute(tag, "data-view", view);
+    }
+    if (tag.startsWith("<button")) {
+      const target = htmlAttribute(tag, "data-view-target");
+      if (isReaderView(target)) return setHtmlAttribute(tag, "aria-pressed", String(target === view));
+    }
+    if (tag.startsWith("<section") && hasClass(tag, "mdv-raw-diff")) {
+      return view === "raw" ? removeHtmlAttribute(tag, "hidden") : setHtmlAttribute(tag, "hidden", "");
+    }
+    return tag;
+  });
+  if (!foundApp) throw new Error("mdview document is missing its app root.");
+  return transformed;
+}
+
+function hasClass(tag, className) {
+  return htmlAttribute(tag, "class")?.split(/\s+/).includes(className) || false;
+}
+
+function htmlAttribute(tag, name) {
+  const match = tag.match(new RegExp(`\\s${name}\\s*=\\s*(["'])(.*?)\\1`, "i"));
+  return match?.[2] ?? null;
+}
+
+function setHtmlAttribute(tag, name, value) {
+  const encoded = value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+  const pattern = new RegExp(`(\\s${name}\\s*=\\s*)(["'])(.*?)\\2`, "i");
+  if (pattern.test(tag)) return tag.replace(pattern, `$1"${encoded}"`);
+  return tag.replace(/>$/, ` ${name}="${encoded}">`);
+}
+
+function removeHtmlAttribute(tag, name) {
+  return tag.replace(new RegExp(`\\s${name}(?:\\s*=\\s*(?:["'][^"']*["']|[^\\s>]+))?`, "i"), "");
 }
 
 async function followMarkdownLink(requestUrl, response) {

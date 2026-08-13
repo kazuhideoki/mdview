@@ -11,7 +11,13 @@ test("loopback server serves only cache files and rejects writes", async (contex
   const cache = path.join(root, "cache");
   await mkdir(path.join(cache, "documents"), { recursive: true });
   await mkdir(path.join(root, "repo"), { recursive: true });
-  await writeFile(path.join(cache, "documents", "page.html"), "<!doctype html><title>ok</title>");
+  await writeFile(path.join(cache, "documents", "page.html"), `<!doctype html><title>ok</title>
+    <div data-view="read" class="shell mdv-app">
+      <button type="button" data-view-target="read" aria-pressed="true">Read</button>
+      <button type="button" data-view-target="changes" aria-pressed="false">Changes</button>
+      <button type="button" data-view-target="raw" aria-pressed="false">Raw diff</button>
+      <section hidden="hidden" class="panel mdv-raw-diff">diff</section>
+    </div>`);
   await writeFile(path.join(root, "repo", "page.md"), "# Page\n");
   await writeFile(path.join(root, "secret.txt"), "secret");
 
@@ -62,12 +68,25 @@ test("loopback server serves only cache files and rejects writes", async (contex
     const port = server.address().port;
     const health = await fetch(`http://127.0.0.1:${port}/__mdview_health`);
     assert.equal(health.status, 200);
-    assert.equal(await health.text(), "mdview/3\n");
+    assert.equal(await health.text(), "mdview/5\n");
 
     const page = await fetch(`http://127.0.0.1:${port}/documents/page.html`);
     assert.equal(page.status, 200);
     assert.match(await page.text(), /<title>ok/);
     assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+
+    const changesPage = await fetch(`http://127.0.0.1:${port}/documents/page.html?view=changes`);
+    const changesHtml = await changesPage.text();
+    assert.match(changesHtml, /data-view="changes" class="shell mdv-app"/);
+    assert.match(changesHtml, /data-view-target="read" aria-pressed="false"/);
+    assert.match(changesHtml, /data-view-target="changes" aria-pressed="true"/);
+    assert.match(changesHtml, /hidden="" class="panel mdv-raw-diff"/);
+
+    const rawPage = await fetch(`http://127.0.0.1:${port}/documents/page.html?view=raw`);
+    const rawHtml = await rawPage.text();
+    assert.match(rawHtml, /data-view="raw" class="shell mdv-app"/);
+    assert.match(rawHtml, /data-view-target="raw" aria-pressed="true"/);
+    assert.doesNotMatch(rawHtml, /<section[^>]*\shidden(?:\s|=|>)/);
 
     const writeAttempt = await fetch(`http://127.0.0.1:${port}/documents/page.html`, { method: "POST" });
     assert.equal(writeAttempt.status, 405);

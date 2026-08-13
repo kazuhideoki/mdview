@@ -605,8 +605,10 @@ function navigateRevision(direction) {
     scrollRatio: scrollY / scrollRange,
     headingId,
   }));
-  const hash = headingId ? `#${encodeURIComponent(headingId)}` : "";
-  location.assign(`${target.href}${hash}`);
+  const destination = new URL(target.href, location.origin);
+  destination.searchParams.set("view", app.dataset.view);
+  if (headingId) destination.hash = headingId;
+  location.assign(`${destination.pathname}${destination.search}${destination.hash}`);
 }
 
 function currentHeadingId() {
