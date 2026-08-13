@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { visit } from "unist-util-visit";
 import { ensureAssets } from "./assets.mjs";
 import { catalogEntryForSource, catalogEntryId, registerCatalogEntry } from "./catalog.mjs";
-import { changedLinesFromPatch, documentMeta, lineChangesFromPatch, parseMarkdown, rawDiffBetweenFiles, rawDiffForFile } from "./document.mjs";
+import { changedLinesFromPatch, documentMeta, lineChangesFromPatch, parseMarkdown, rangeHasChange, rawDiffBetweenFiles, rawDiffForFile } from "./document.mjs";
 import {
   historyRevisionId,
   historySnapshotPath,
@@ -76,7 +76,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
   const lineChanges = lineChangesFromPatch(rawDiff);
   let beforeTree = null;
-  if (beforePath && lineChanges.removedLines.length > 0) {
+  if (beforePath && (lineChanges.removedLines.length > 0 || lineChanges.addedLines.length > 0)) {
     beforeTree = parseMarkdown(await readFile(beforePath, "utf8"));
     rewriteLocalMarkdownLinks(beforeTree, absolutePath);
   }
@@ -85,15 +85,20 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     prepareLocalImages(candidate, absolutePath, meta, outputDir),
     prepareD2Diagrams(candidate, outputDir),
   ]));
+  const addedDiffLines = structuralDiffLines(tree, lineChanges.addedLines, lineChanges.hunks, "new");
+  const removedDiffLines = beforeTree
+    ? structuralDiffLines(beforeTree, lineChanges.removedLines, lineChanges.hunks, "old")
+    : [];
+  if (beforeTree) mergeTableRowDiffs(tree, beforeTree, addedDiffLines, removedDiffLines);
   const rendered = await renderDocument(tree, {
     changedLines,
-    diffLines: structuralDiffLines(tree, lineChanges.addedLines, lineChanges.hunks, "new"),
+    diffLines: addedDiffLines,
     diffKind: "added",
   });
   if (beforeTree) {
     const beforeRendered = await renderDocument(beforeTree, {
       changedLines: lineChanges.removedLines,
-      diffLines: structuralDiffLines(beforeTree, lineChanges.removedLines, lineChanges.hunks, "old"),
+      diffLines: removedDiffLines,
       diffKind: "removed",
       idPrefix: "removed-",
     });
@@ -217,7 +222,7 @@ function structuralDiffLines(tree, changedLines, hunks, side) {
 
 function interleaveRevisionBlocks(currentBlocks, previousBlocks, hunks) {
   const insertions = new Map();
-  for (const block of previousBlocks.filter((candidate) => candidate.diffChanged)) {
+  for (const block of previousBlocks.filter((candidate) => candidate.diffChanged && !candidate.mergedDiff)) {
     const removedPositions = hunks.flatMap((hunk) => hunk.removedAt ?? []);
     const matchingPositions = removedPositions
       .filter((position) => position.oldLine >= block.startLine && position.oldLine <= block.endLine);
@@ -248,6 +253,125 @@ function interleaveRevisionBlocks(currentBlocks, previousBlocks, hunks) {
     if (index < currentBlocks.length) html.push(currentBlocks[index].html);
   }
   return html.join("\n");
+}
+
+function mergeTableRowDiffs(currentTree, previousTree, currentDiffLines, previousDiffLines) {
+  const currentChanged = changedTables(currentTree, currentDiffLines);
+  const previousChanged = changedTables(previousTree, previousDiffLines);
+  const usedPrevious = new Set();
+
+  for (const current of currentChanged) {
+    const currentHeader = tableRowSignature(current.children?.[0]);
+    const matches = previousChanged
+      .map((candidate, index) => ({ candidate, index }))
+      .filter(({ candidate, index }) => !usedPrevious.has(index)
+        && tableRowSignature(candidate.children?.[0]) === currentHeader);
+    const competingCurrentTables = currentChanged.filter((candidate) =>
+      tableRowSignature(candidate.children?.[0]) === currentHeader);
+    if (!currentHeader || matches.length !== 1 || competingCurrentTables.length !== 1) continue;
+    const [match] = matches;
+    const previous = match.candidate;
+    const currentRows = current.children?.slice(1) ?? [];
+    const previousRows = previous.children?.slice(1) ?? [];
+    if (hasDuplicateSignatures(currentRows) || hasDuplicateSignatures(previousRows)) continue;
+    const mergedRows = mergeTableRows(currentRows, previousRows);
+    if (!mergedRows.some((row) => row.data?.mdviewDiffKind)) continue;
+
+    usedPrevious.add(match.index);
+    current.children = [current.children[0], ...mergedRows];
+    current.data = { ...current.data, mdviewMergedDiff: true };
+    previous.data = { ...previous.data, mdviewMergedDiff: true };
+  }
+}
+
+function changedTables(tree, diffLines) {
+  const lines = new Set(diffLines);
+  return (tree.children ?? []).filter((node) => node.type === "table" && rangeHasChange(node, lines));
+}
+
+function mergeTableRows(currentRows, previousRows) {
+  const currentSignatures = currentRows.map(tableRowSignature);
+  const previousSignatures = previousRows.map(tableRowSignature);
+  const matches = longestCommonSubsequence(previousSignatures, currentSignatures);
+  const merged = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+
+  for (const [nextPrevious, nextCurrent] of [...matches, [previousRows.length, currentRows.length]]) {
+    const previousRun = previousRows.slice(previousIndex, nextPrevious);
+    const currentRun = currentRows.slice(currentIndex, nextCurrent);
+    if (previousRun.length === currentRun.length) {
+      for (let index = 0; index < previousRun.length; index += 1) {
+        merged.push(markTableRow(previousRun[index], "removed"));
+        merged.push(markTableRow(currentRun[index], "added"));
+      }
+    } else {
+      merged.push(...previousRun.map((row) => markTableRow(row, "removed")));
+      merged.push(...currentRun.map((row) => markTableRow(row, "added")));
+    }
+    previousIndex = nextPrevious;
+    currentIndex = nextCurrent;
+    if (nextPrevious < previousRows.length && nextCurrent < currentRows.length) {
+      merged.push(currentRows[nextCurrent]);
+      previousIndex = nextPrevious + 1;
+      currentIndex = nextCurrent + 1;
+    }
+  }
+  return merged;
+}
+
+function longestCommonSubsequence(left, right) {
+  const lengths = Array.from({ length: left.length + 1 }, () => Array(right.length + 1).fill(0));
+  for (let leftIndex = left.length - 1; leftIndex >= 0; leftIndex -= 1) {
+    for (let rightIndex = right.length - 1; rightIndex >= 0; rightIndex -= 1) {
+      lengths[leftIndex][rightIndex] = left[leftIndex] === right[rightIndex]
+        ? lengths[leftIndex + 1][rightIndex + 1] + 1
+        : Math.max(lengths[leftIndex + 1][rightIndex], lengths[leftIndex][rightIndex + 1]);
+    }
+  }
+  const matches = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (left[leftIndex] === right[rightIndex]) {
+      matches.push([leftIndex, rightIndex]);
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (lengths[leftIndex + 1][rightIndex] >= lengths[leftIndex][rightIndex + 1]) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+  return matches;
+}
+
+function markTableRow(row, diffKind) {
+  row.data = { ...row.data, mdviewDiffKind: diffKind };
+  return row;
+}
+
+function tableRowSignature(row) {
+  if (!row) return "";
+  return stableNodeSignature(row);
+}
+
+function stableNodeSignature(node) {
+  if (!node || typeof node !== "object") return JSON.stringify(node);
+  const properties = Object.entries(node)
+    .filter(([key]) => !["position", "data"].includes(key))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => [key, Array.isArray(value)
+      ? value.map(stableNodeSignature)
+      : value && typeof value === "object"
+        ? stableNodeSignature(value)
+        : value]);
+  return JSON.stringify(properties);
+}
+
+function hasDuplicateSignatures(rows) {
+  const signatures = rows.map(tableRowSignature);
+  return new Set(signatures).size !== signatures.length;
 }
 
 function distanceFromBlock(line, block) {

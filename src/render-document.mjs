@@ -22,6 +22,7 @@ export async function renderDocument(tree, { changedLines = [], diffLines = [], 
       endLine: node.position?.end.line ?? node.position?.start.line ?? 1,
       changed,
       diffChanged,
+      mergedDiff: Boolean(node.data?.mdviewMergedDiff),
     });
   }
 
@@ -39,7 +40,7 @@ export async function renderDocument(tree, { changedLines = [], diffLines = [], 
 async function renderNode(node, state, topLevel = false) {
   const changed = rangeHasChange(node, state.changedLineSet);
   const changeAttr = changed ? ' data-change="modified"' : "";
-  const diffAttr = topLevel && state.diffKind && rangeHasChange(node, state.diffLineSet)
+  const diffAttr = topLevel && !node.data?.mdviewMergedDiff && state.diffKind && rangeHasChange(node, state.diffLineSet)
     ? ` data-diff-kind="${state.diffKind}"`
     : "";
   const sourceAttrs = node.position
@@ -109,10 +110,18 @@ async function renderInlineChildren(children, state) {
 
 async function renderTableRow(row, state, header, alignments = []) {
   const cellTag = header ? "th" : "td";
-  const cells = await Promise.all((row.children ?? []).map(async (cell, index) =>
-    `<${cellTag}${header ? ' scope="col"' : ""}${alignments[index] ? ` class="align-${alignments[index]}"` : ""}>${await renderInlineChildren(cell.children ?? [], state)}</${cellTag}>`,
-  ));
-  return `<tr>${cells.join("")}</tr>`;
+  const diffKind = row.data?.mdviewDiffKind;
+  const diffAttr = diffKind ? ` data-diff-kind="${diffKind}"` : "";
+  const sourceAttrs = row.position && diffKind !== "removed"
+    ? ` data-source-start="${row.position.start.line}" data-source-end="${row.position.end.line}"`
+    : "";
+  const cells = await Promise.all((row.children ?? []).map(async (cell, index) => {
+    const marker = index === 0 && diffKind
+      ? `<span class="mdv-table-diff-marker" aria-hidden="true">${diffKind === "removed" ? "−" : "+"}</span><span class="mdv-visually-hidden">${diffKind === "removed" ? "削除行: " : "追加行: "}</span>`
+      : "";
+    return `<${cellTag}${header ? ' scope="col"' : ""}${alignments[index] ? ` class="align-${alignments[index]}"` : ""}>${marker}${await renderInlineChildren(cell.children ?? [], state)}</${cellTag}>`;
+  }));
+  return `<tr${diffAttr}${sourceAttrs}>${cells.join("")}</tr>`;
 }
 
 async function renderInline(node, state) {
