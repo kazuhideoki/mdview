@@ -3,7 +3,7 @@ import { access, mkdtemp, mkdir, readFile, readdir, unlink, writeFile } from "no
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { changedLinesFromPatch } from "../src/document.mjs";
+import { changedLinesFromPatch, lineChangesFromPatch } from "../src/document.mjs";
 
 test("changed line parsing excludes unchanged diff context", () => {
   const patch = [
@@ -16,6 +16,11 @@ test("changed line parsing excludes unchanged diff context", () => {
     " Unchanged",
   ].join("\n");
   assert.deepEqual(changedLinesFromPatch(patch), [3]);
+  assert.deepEqual(lineChangesFromPatch(patch), {
+    addedLines: [3],
+    removedLines: [3],
+    hunks: [{ oldStart: 1, oldCount: 5, newStart: 1, newCount: 5, addedLines: [3], addedAt: [{ oldLine: 4, newLine: 3 }], removedLines: [3], removedAt: [{ oldLine: 3, newLine: 3 }] }],
+  });
 });
 
 test("renders unique heading ids, GFM, highlighted code, and relative images outside the repo", async () => {
@@ -213,7 +218,7 @@ test("keeps prior HTML and renders revision changes against the previous snapsho
   const cache = path.join(root, "cache");
   const historyRoot = path.join(root, "history");
   const markdownPath = path.join(root, "history.md");
-  await writeFile(markdownPath, "# Before\n\nSame.\n");
+  await writeFile(markdownPath, "# Title\n\nBefore.\n\nSame.\n");
   const previousCache = process.env.MDVIEW_CACHE_DIR;
   process.env.MDVIEW_CACHE_DIR = cache;
   try {
@@ -223,7 +228,7 @@ test("keeps prior HTML and renders revision changes against the previous snapsho
       meta: { repo: "history", branch: "main", relativePath: "history.md", repoRoot: root },
       catalogContext: { source: "hook", sessionId: "session", turnId: "turn-1", renderedAt: "2026-08-13T10:00:00.000Z" },
     });
-    await writeFile(markdownPath, "# After\n\nSame.\n");
+    await writeFile(markdownPath, "# Title\n\nAfter.\n\nSame.\n");
     const second = await renderMarkdownFile(markdownPath, {
       historyRoot,
       meta: { repo: "history", branch: "main", relativePath: "history.md", repoRoot: root },
@@ -233,15 +238,86 @@ test("keeps prior HTML and renders revision changes against the previous snapsho
     await access(second.outputPath);
     assert.notEqual(first.outputPath, second.outputPath);
     const secondHtml = await readFile(second.outputPath, "utf8");
-    assert.match(secondHtml, /-# Before/);
-    assert.match(secondHtml, /\+# After/);
-    assert.match(secondHtml, /<h1[^>]*data-change="modified"/);
+    assert.match(secondHtml, /-Before[.]/);
+    assert.match(secondHtml, /\+After[.]/);
+    assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="removed"[^>]*>Before[.]<\/p>/);
+    assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="added"[^>]*>After[.]<\/p>/);
+    assert.ok(secondHtml.indexOf('id="title"') < secondHtml.indexOf('data-diff-kind="removed"'));
+    assert.ok(secondHtml.indexOf('data-diff-kind="removed"') < secondHtml.indexOf('data-diff-kind="added"'));
+    assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*>Same[.]<\/p>/);
+    assert.doesNotMatch(secondHtml, /<h1[^>]*data-change="modified"/);
     assert.match(secondHtml, /data-action="previous-revision"/);
     assert.doesNotMatch(secondHtml, /previous-change/);
     const { readDocumentHistory } = await import(`../src/history.mjs?history=${Date.now()}`);
     const history = await readDocumentHistory(first.catalogEntry.id, { root: historyRoot });
     assert.equal(history.revisions.length, 2);
     assert.equal(history.revisions[1].beforeContentHash, history.revisions[0].contentHash);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("shows structural paragraph changes when only the separating blank line changes", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-structural-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "structural.md");
+  await writeFile(markdownPath, "# Title\n\nAlpha.\n\nBeta.\n");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?structural=${Date.now()}`);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "structural", branch: "main", relativePath: "structural.md", repoRoot: root },
+      catalogContext: { source: "hook", sessionId: "session", turnId: "turn-1", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Title\n\nAlpha.\nBeta.\n");
+    const second = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "structural", branch: "main", relativePath: "structural.md", repoRoot: root },
+      catalogContext: { source: "hook", sessionId: "session", turnId: "turn-2", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(second.outputPath, "utf8");
+    assert.match(html, /data-diff-kind="removed"[^>]*>Alpha[.]<\/p>/);
+    assert.match(html, /data-diff-kind="removed"[^>]*>Beta[.]<\/p>/);
+    assert.match(html, /data-diff-kind="added"[^>]*>Alpha[.]\nBeta[.]<\/p>/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("pairs a shortened paragraph without marking the following block", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-deletion-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "deletion.md");
+  await writeFile(markdownPath, "# Title\n\nAlpha.\nBeta.\n\nSame.\n");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?deletion=${Date.now()}`);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "deletion", branch: "main", relativePath: "deletion.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Title\n\nAlpha.\n\nSame.\n");
+    const second = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "deletion", branch: "main", relativePath: "deletion.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(second.outputPath, "utf8");
+    const removedIndex = html.indexOf('data-diff-kind="removed"');
+    const addedIndex = html.indexOf('data-diff-kind="added"');
+    assert.ok(removedIndex >= 0 && removedIndex < addedIndex);
+    assert.match(html, /data-diff-kind="removed"[^>]*>Alpha[.]\nBeta[.]<\/p>/);
+    assert.match(html, /data-diff-kind="added"[^>]*>Alpha[.]<\/p>/);
+    assert.match(html, /<p class="mdv-block mdv-paragraph"[^>]*>Same[.]<\/p>/);
+    assert.doesNotMatch(html, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind[^>]*>Same[.]<\/p>/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

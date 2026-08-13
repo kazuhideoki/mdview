@@ -23,6 +23,10 @@
     --mdv-accent: #54d7ef;
     --mdv-accent-dim: #1b6c79;
     --mdv-modified: #d8a62e;
+    --mdv-added: #57ab5a;
+    --mdv-added-bg: rgba(46, 160, 67, .15);
+    --mdv-removed: #e06c75;
+    --mdv-removed-bg: rgba(248, 81, 73, .15);
     --mdv-success: #72b879;
     --mdv-measure: 76ch;
     --mdv-font-size: 17px;
@@ -184,9 +188,19 @@
 
 @layer states {
   [data-change="modified"] { --mdv-change-color: var(--mdv-modified); }
+  .mdv-document-body > [data-diff-kind="removed"] { display: none; }
   .mdv-heading[data-change="modified"]::after { content: "変更"; display: inline-flex; margin-left: 12px; padding: 4px 8px 3px; translate: 0 -3px; color: var(--mdv-modified); border: 1px solid #765d1d; border-radius: 3px; font: 600 11px/1 var(--mdv-font-sans); }
-  .mdv-app[data-view="changes"] .mdv-block:not([data-change]), .mdv-app[data-view="changes"] .mdv-heading:not([data-change]):not(h1) { opacity: .4; }
-  .mdv-app[data-view="changes"] [data-change="modified"] { background: rgba(216,166,46,.045); }
+  .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="removed"] { display: block; }
+  .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind] { position: relative; border-left: 2px solid var(--mdv-diff-color); background: var(--mdv-diff-bg); }
+  .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind]::before { content: attr(data-diff-marker); position: absolute; left: -25px; top: .18em; bottom: auto; width: 18px; height: auto; background: transparent; color: var(--mdv-diff-color); text-align: center; font: 750 .82em/1.6 var(--mdv-font-mono); }
+  .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="removed"] { --mdv-diff-color: var(--mdv-removed); --mdv-diff-bg: var(--mdv-removed-bg); --mdv-change-color: var(--mdv-removed); }
+  .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="added"] { --mdv-diff-color: var(--mdv-added); --mdv-diff-bg: var(--mdv-added-bg); --mdv-change-color: var(--mdv-added); }
+  .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="removed"]::before { content: "-"; }
+  .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="added"]::before { content: "+"; }
+  .mdv-app[data-view="changes"] .mdv-document-body > .mdv-paragraph[data-diff-kind] { padding: .18em .55em; margin-left: -.55em; }
+  .mdv-app[data-view="changes"] .mdv-document-body > .mdv-heading[data-diff-kind] { padding: .08em .35em; margin-left: -.35em; }
+  .mdv-app[data-view="changes"] .mdv-document-body > .mdv-list[data-diff-kind] { padding-top: .2em; padding-bottom: .2em; padding-right: .55em; }
+  .mdv-app[data-view="changes"] .mdv-heading[data-diff-kind]::after { display: none; }
   .mdv-app[data-view="raw"] .mdv-document { display: none; }
   .mdv-app[data-view="raw"] .mdv-raw-diff { display: block; }
   .mdv-app.toc-hidden { grid-template-columns: 0 minmax(0, 1fr); }
@@ -221,6 +235,7 @@
     .mdv-app:not(.toc-hidden) .mdv-sidebar-scrim { position: fixed; z-index: 24; inset: var(--mdv-topbar) 0 var(--mdv-reviewbar) var(--mdv-sidebar); display: block; background: rgba(0,0,0,.56); }
     .mdv-main { grid-column: 2; }
     .mdv-document { width: 100%; padding: 40px 22px 100px 38px; }
+    .mdv-raw-diff { width: calc(100% - 24px); margin: 20px 12px 90px; }
     .mdv-document-body > .mdv-block[data-change="modified"]::before { left: -14px; }
     .mdv-reviewbar { grid-template-columns: 1fr auto; padding: 0 12px; }
     .mdv-history-nav { grid-column: 1; gap: 3px; }

@@ -111,15 +111,39 @@ function emptyCatalogError() {
 
 async function demoCommand() {
   const source = path.join(PROJECT_ROOT, "examples", "editorial-focus.md");
-  const result = await renderMarkdownFile(source, {
-    changedLines: SAMPLE_META.changedLines,
+  const currentContents = await readFile(source, "utf8");
+  const beforeContents = currentContents
+    .replace("境界を定義し、プロセス間", "境界を説明し、プロセス間")
+    .replace("デプロイ単位かつ障害ドメインの単位で定義します。", "デプロイ単位で定義します。")
+    .replace("キュー（非同期）", "キュー");
+  const demoSessionId = `demo-${randomUUID()}`;
+  const renderedAt = Date.now();
+  const before = await renderMarkdownFile(source, {
+    sourceContents: beforeContents,
+    beforeContentHash: null,
     meta: SAMPLE_META,
-    rawDiff: `@@ -4,3 +4,6 @@\n+## 境界の定義\n+\n+実行プロセスの境界を明確化しました。`,
-    catalogContext: { source: "manual" },
+    catalogContext: {
+      source: "manual",
+      sessionId: demoSessionId,
+      turnId: "before",
+      renderedAt: new Date(renderedAt).toISOString(),
+    },
   });
+  const result = await renderMarkdownFile(source, {
+    sourceContents: currentContents,
+    beforeContentHash: before.historyRevision.contentHash,
+    meta: SAMPLE_META,
+    catalogContext: {
+      source: "manual",
+      sessionId: demoSessionId,
+      turnId: "after",
+      renderedAt: new Date(renderedAt + 1).toISOString(),
+    },
+  });
+  const demoUrl = `${result.url}?view=changes`;
   await ensureServerForBrowser();
-  await openUrl(result.url);
-  process.stdout.write(`${result.url}\n`);
+  await openUrl(demoUrl);
+  process.stdout.write(`${demoUrl}\n`);
   return 0;
 }
 

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { visit } from "unist-util-visit";
 import { ensureAssets } from "./assets.mjs";
 import { catalogEntryForSource, catalogEntryId, registerCatalogEntry } from "./catalog.mjs";
-import { changedLinesFromPatch, documentMeta, parseMarkdown, rawDiffBetweenFiles, rawDiffForFile } from "./document.mjs";
+import { changedLinesFromPatch, documentMeta, lineChangesFromPatch, parseMarkdown, rawDiffBetweenFiles, rawDiffForFile } from "./document.mjs";
 import {
   historyRevisionId,
   historySnapshotPath,
@@ -48,10 +48,10 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const beforeContentHash = hasTurnBaseline
     ? options.beforeContentHash
     : latestRevision?.contentHash ?? null;
+  const beforePath = beforeContentHash ? historySnapshotPath(beforeContentHash, historyOptions) : null;
   let revisionDiff = options.rawDiff;
   let changedLines = options.changedLines;
   if (revisionDiff === undefined && (hasTurnBaseline || latestRevision)) {
-    const beforePath = beforeContentHash ? historySnapshotPath(beforeContentHash, historyOptions) : null;
     const afterPath = options.sourceContents === undefined ? absolutePath : historySnapshotPath(contentHash, historyOptions);
     revisionDiff = await rawDiffBetweenFiles(beforePath, afterPath, meta.relativePath);
   }
@@ -73,17 +73,37 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const outputDir = path.dirname(documentPath);
   const tree = parseMarkdown(markdown);
   rewriteLocalMarkdownLinks(tree, absolutePath);
-  await Promise.all([
-    prepareLocalImages(tree, absolutePath, meta, outputDir),
-    prepareD2Diagrams(tree, outputDir),
-  ]);
-  const rendered = await renderDocument(tree, { changedLines });
+  const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
+  const lineChanges = lineChangesFromPatch(rawDiff);
+  let beforeTree = null;
+  if (beforePath && lineChanges.removedLines.length > 0) {
+    beforeTree = parseMarkdown(await readFile(beforePath, "utf8"));
+    rewriteLocalMarkdownLinks(beforeTree, absolutePath);
+  }
+  const preparedTrees = beforeTree ? [tree, beforeTree] : [tree];
+  await Promise.all(preparedTrees.flatMap((candidate) => [
+    prepareLocalImages(candidate, absolutePath, meta, outputDir),
+    prepareD2Diagrams(candidate, outputDir),
+  ]));
+  const rendered = await renderDocument(tree, {
+    changedLines,
+    diffLines: structuralDiffLines(tree, lineChanges.addedLines, lineChanges.hunks, "new"),
+    diffKind: "added",
+  });
+  if (beforeTree) {
+    const beforeRendered = await renderDocument(beforeTree, {
+      changedLines: lineChanges.removedLines,
+      diffLines: structuralDiffLines(beforeTree, lineChanges.removedLines, lineChanges.hunks, "old"),
+      diffKind: "removed",
+      idPrefix: "removed-",
+    });
+    rendered.html = interleaveRevisionBlocks(rendered.blocks, beforeRendered.blocks, lineChanges.hunks);
+  }
   meta.changeCount = rendered.changeCount;
   meta.updatedLabel = options.updatedLabel || "Updated by Codex · just now";
   const assets = await ensureAssets();
   await mkdir(outputDir, { recursive: true });
 
-  const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
   const title = rendered.headings[0]?.text || path.basename(absolutePath);
   const html = pageTemplate({
     title,
@@ -160,6 +180,80 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     meta,
     ...rendered,
   };
+}
+
+function structuralDiffLines(tree, changedLines, hunks, side) {
+  const lines = new Set(changedLines);
+  const blocks = (tree.children ?? []).filter((node) => node.position);
+  for (const hunk of hunks) {
+    const direct = side === "old" ? hunk.removedAt : hunk.addedAt;
+    const opposite = side === "old" ? hunk.addedAt : hunk.removedAt;
+    const key = side === "old" ? "oldLine" : "newLine";
+    for (const position of direct) {
+      const line = position[key];
+      if (blocks.some((node) => line >= node.position.start.line && line <= node.position.end.line)) continue;
+      const previous = [...blocks].reverse().find((node) => node.position.end.line < line);
+      const next = blocks.find((node) => node.position.start.line > line);
+      if (previous) lines.add(previous.position.end.line);
+      if (next) lines.add(next.position.start.line);
+    }
+    if (direct.length === 0) {
+      for (const position of opposite) {
+        const line = position[key];
+        const containing = blocks.find((node) => line >= node.position.start.line && line <= node.position.end.line);
+        if (containing) {
+          lines.add(line);
+          continue;
+        }
+        const previous = [...blocks].reverse().find((node) => node.position.end.line < line);
+        const next = blocks.find((node) => node.position.start.line > line);
+        if (previous) lines.add(previous.position.end.line);
+        else if (next) lines.add(next.position.start.line);
+      }
+    }
+  }
+  return [...lines];
+}
+
+function interleaveRevisionBlocks(currentBlocks, previousBlocks, hunks) {
+  const insertions = new Map();
+  for (const block of previousBlocks.filter((candidate) => candidate.diffChanged)) {
+    const removedPositions = hunks.flatMap((hunk) => hunk.removedAt ?? []);
+    const matchingPositions = removedPositions
+      .filter((position) => position.oldLine >= block.startLine && position.oldLine <= block.endLine);
+    const relevantPositions = matchingPositions.length > 0
+      ? matchingPositions
+      : removedPositions.toSorted((left, right) => (
+        distanceFromBlock(left.oldLine, block) - distanceFromBlock(right.oldLine, block)
+      )).slice(0, 1);
+    if (relevantPositions.length === 0) continue;
+    const targetLine = Math.min(...relevantPositions.map((position) => Math.max(position.newLine, 1)));
+    const changedCurrentBlocks = currentBlocks
+      .map((candidate, index) => ({ candidate, index }))
+      .filter(({ candidate }) => candidate.diffChanged)
+      .toSorted((left, right) => (
+        distanceFromBlock(targetLine, left.candidate) - distanceFromBlock(targetLine, right.candidate)
+      ));
+    let targetIndex = changedCurrentBlocks[0]?.index
+      ?? currentBlocks.findIndex((candidate) => candidate.endLine >= targetLine);
+    if (targetIndex < 0) targetIndex = currentBlocks.length;
+    const existing = insertions.get(targetIndex) ?? [];
+    existing.push(block.html);
+    insertions.set(targetIndex, existing);
+  }
+
+  const html = [];
+  for (let index = 0; index <= currentBlocks.length; index += 1) {
+    html.push(...(insertions.get(index) ?? []));
+    if (index < currentBlocks.length) html.push(currentBlocks[index].html);
+  }
+  return html.join("\n");
+}
+
+function distanceFromBlock(line, block) {
+  if (line < block.startLine) return block.startLine - line;
+  if (line > block.endLine) return line - block.endLine;
+  return 0;
 }
 
 async function isFile(filePath) {

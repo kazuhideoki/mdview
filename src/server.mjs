@@ -22,7 +22,7 @@ const CONTENT_TYPES = new Map([
   [".gif", "image/gif"],
   [".webp", "image/webp"],
 ]);
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const followRenders = new Map();
 const execFileAsync = promisify(execFile);
 

@@ -1,6 +1,6 @@
 const app = document.querySelector(".mdv-app");
 const rawDiff = document.querySelector(".mdv-raw-diff");
-const headings = [...document.querySelectorAll(".mdv-heading[id]")];
+const headings = [...document.querySelectorAll('.mdv-heading[id]:not([data-diff-kind="removed"])')];
 const tocLinks = [...document.querySelectorAll(".mdv-toc a")];
 const documentId = app?.dataset.documentId || "";
 const revisionId = app?.dataset.revisionId || "";
@@ -56,6 +56,7 @@ if (matchMedia("(max-width: 760px)").matches) app?.classList.add("toc-hidden");
 syncTocState();
 restorePreferences();
 restoreRevisionNavigation();
+restoreRequestedView();
 observeHeadings();
 renderDiagrams();
 loadHistory();
@@ -633,6 +634,11 @@ function restoreRevisionNavigation() {
       scrollTo({ top: scrollRange * Math.min(Math.max(saved.scrollRatio, 0), 1) });
     });
   }
+}
+
+function restoreRequestedView() {
+  const requested = new URLSearchParams(location.search).get("view");
+  if (["read", "changes", "raw"].includes(requested)) setView(requested);
 }
 
 function formatHistoryTimestamp(value) {

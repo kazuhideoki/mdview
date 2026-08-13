@@ -62,7 +62,7 @@ test("loopback server serves only cache files and rejects writes", async (contex
     const port = server.address().port;
     const health = await fetch(`http://127.0.0.1:${port}/__mdview_health`);
     assert.equal(health.status, 200);
-    assert.equal(await health.text(), "mdview/2\n");
+    assert.equal(await health.text(), "mdview/3\n");
 
     const page = await fetch(`http://127.0.0.1:${port}/documents/page.html`);
     assert.equal(page.status, 200);
