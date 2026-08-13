@@ -49,6 +49,12 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.match(html, /type="checkbox" disabled checked/);
     assert.match(html, /class="shiki/);
     assert.match(html, /src="[.]\/_assets\/[a-f0-9]+[.]png"/);
+    assert.match(html, /data-view-target="read"[^>]+aria-keyshortcuts="R"[^>]+title="Read \(R\)"/);
+    assert.match(html, /data-view-target="changes"[^>]+aria-keyshortcuts="C"[^>]+title="Changes \(C\)"/);
+    assert.match(html, /data-view-target="raw"[^>]+aria-keyshortcuts="D"[^>]+title="Raw diff \(D\)"/);
+    assert.match(html, /href="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]css"/);
+    assert.match(html, /src="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]js"/);
+    assert.match(html, /src="(?:[.][.]\/)+assets\/mermaid[.]min[.][a-f0-9]{64}[.]js"/);
     assert.ok(result.outputPath.startsWith(cache));
     const copied = await readdir(path.join(path.dirname(result.outputPath), "_assets"));
     assert.equal(copied.length, 1);
@@ -68,6 +74,45 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.equal((await readdir(path.join(cache, "catalog"))).length, 1);
     assert.match(html, new RegExp(`data-document-id="${result.catalogEntry.id}"`));
     assert.equal(result.historyRevision.contentHash.length, 64);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("rewrites only relative Markdown links through the mdview follow route", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-links-"));
+  const cache = path.join(root, "cache");
+  const markdownPath = path.join(root, "index.md");
+  await writeFile(markdownPath, [
+    "# Links",
+    "",
+    "[Guide](./guide.md#usage)",
+    "[Anchor](#links)",
+    "[Web](https://example.com/remote.md)",
+    "[Mail](mailto:docs@example.com)",
+    "[Text](./notes.txt)",
+    "[Encoded slash](./a%2Fb.md)",
+    "",
+  ].join("\n"));
+
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { catalogEntryId } = await import(`../src/catalog.mjs?links=${Date.now()}`);
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?links=${Date.now()}`);
+    const result = await renderMarkdownFile(markdownPath, {
+      meta: { repo: "links", branch: "main", relativePath: "index.md", repoRoot: root },
+      catalogContext: { source: "manual" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    const sourceId = catalogEntryId(markdownPath);
+    assert.match(html, new RegExp(`href="/__mdview/follow/${sourceId}[?]target=[.]%2Fguide[.]md&amp;fragment=usage"`));
+    assert.match(html, /href="#links"/);
+    assert.match(html, /href="https:\/\/example[.]com\/remote[.]md"/);
+    assert.match(html, /href="mailto:docs@example[.]com"/);
+    assert.match(html, /href="[.]\/notes[.]txt"/);
+    assert.match(html, /href="[.]\/a%2Fb[.]md"/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

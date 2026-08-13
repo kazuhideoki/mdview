@@ -250,7 +250,7 @@ export async function openUrl(url, options = {}) {
 }
 
 function printHelp() {
-  process.stdout.write(`mdview — Codex-edited Markdown reader\n\nUsage:\n  mdview                     Open the latest rendered document\n  mdview list                List rendered documents, newest first\n  mdview open <number>       Open an entry shown by mdview list\n  mdview open <file.md>      Render and open a Markdown file\n  mdview <file.md>           Shortcut for mdview open <file.md>\n  mdview render <file.md>    Render without opening a browser\n  mdview demo\n  mdview serve\n  mdview hook <install|status|uninstall>\n\nReader shortcuts:\n  P                          Open the previous revision of this file\n  N                          Open the next revision of this file\n  Cmd+K or /                 Search all documents shown by mdview list\n`);
+  process.stdout.write(`mdview — Codex-edited Markdown reader\n\nUsage:\n  mdview                     Open the latest rendered document\n  mdview list                List rendered documents, newest first\n  mdview open <number>       Open an entry shown by mdview list\n  mdview open <file.md>      Render and open a Markdown file\n  mdview <file.md>           Shortcut for mdview open <file.md>\n  mdview render <file.md>    Render without opening a browser\n  mdview demo\n  mdview serve\n  mdview hook <install|status|uninstall>\n\nReader shortcuts:\n  P / N                      Open the previous / next revision\n  R / C / D                  Switch to Read / Changes / Raw diff\n  Left / Right               Switch views while a view button is focused\n  Cmd+K or /                 Search all documents shown by mdview list\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

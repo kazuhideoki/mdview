@@ -11,3 +11,5 @@ In the reading view, preserve Markdown's structural markers such as list bullets
 In the reading view, navigate revisions of the same file instead of jumping between changed blocks. Use `N` for the next revision and `P` for the previous revision, with a restrained history cursor that helps readers follow Codex editing history.
 
 Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+
+開発時にサーバーを起動するときは既存のサーバーのポートと競合しないように確認すること。

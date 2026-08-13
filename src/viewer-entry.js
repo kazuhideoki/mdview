@@ -153,6 +153,25 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  const viewButton = event.target.closest?.("[data-view-target]");
+  if (viewButton && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    event.preventDefault();
+    const buttons = [...document.querySelectorAll("[data-view-target]")];
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const nextButton = buttons[(buttons.indexOf(viewButton) + direction + buttons.length) % buttons.length];
+    setView(nextButton.dataset.viewTarget);
+    nextButton.focus();
+    return;
+  }
+
+  const viewShortcuts = { r: "read", c: "changes", d: "raw" };
+  const view = viewShortcuts[event.key.toLowerCase()];
+  if (view && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !isEditableTarget(event.target)) {
+    event.preventDefault();
+    setView(view);
+    return;
+  }
+
   if (event.key === "/" && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target)) {
     event.preventDefault();
     openSearch();

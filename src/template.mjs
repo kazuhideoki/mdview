@@ -41,7 +41,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
   <meta name="color-scheme" content="dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>${escape(title)} · mdview</title>
-  <link rel="stylesheet" href="${assets}/viewer.css">
+  <link rel="stylesheet" href="${assets.stylesheet}">
 </head>
 <body>
   <svg class="mdv-icon-sprite" aria-hidden="true">${iconSprite()}</svg>
@@ -55,9 +55,9 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
         <span class="mdv-updated">${escape(meta.updatedLabel ?? "Rendered just now")}</span>
       </div>
       <nav class="mdv-view-switch" aria-label="表示モード">
-        <button type="button" data-view-target="read" aria-pressed="true">Read</button>
-        <button type="button" data-view-target="changes" aria-pressed="false">Changes</button>
-        <button type="button" data-view-target="raw" aria-pressed="false">Raw diff</button>
+        <button type="button" data-view-target="read" aria-pressed="true" aria-keyshortcuts="R" title="Read (R)">Read</button>
+        <button type="button" data-view-target="changes" aria-pressed="false" aria-keyshortcuts="C" title="Changes (C)">Changes</button>
+        <button type="button" data-view-target="raw" aria-pressed="false" aria-keyshortcuts="D" title="Raw diff (D)">Raw diff</button>
       </nav>
       <div class="mdv-top-actions">
         <button class="mdv-search-trigger" type="button" data-action="open-search" aria-label="文書を検索" aria-haspopup="dialog" aria-controls="mdv-search-dialog" aria-expanded="false">${icon("minimalistic-magnifier-linear")}<span>検索</span><kbd>⌘K</kbd></button>
@@ -109,8 +109,8 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
     </div>
     <div class="mdv-toast" role="status" aria-live="polite"></div>
   </div>
-  <script src="${assets}/mermaid.min.js"></script>
-  <script src="${assets}/viewer.js"></script>
+  <script src="${assets.mermaidScript}"></script>
+  <script src="${assets.viewerScript}"></script>
 </body>
 </html>`;
 }

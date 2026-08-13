@@ -12,6 +12,7 @@ Codex が 1 ターンの間に編集した Markdown を検出し、読みやす�
 - `~/.codex/hooks.json` の既存設定を保った install / status / uninstall
 - 描画済み文書の最新一覧と、リポジトリ・ブランチ・パスを横断する検索パレット
 - ターン単位の Markdown スナップショットと、同じファイルの過去リビジョン参照
+- 相対 Markdown リンクを mdview 内で開き、リンク先を描画済み文書へ自動登録
 
 ## セットアップ
 
@@ -40,9 +41,9 @@ mdview hook uninstall
 
 引数なしの `mdview` は最後に描画した文書を開きます。Hook による再描画ではブラウザや配信サーバーを起動しないため、確認したいときに `mdview` または `mdview open <番号>` を実行します。`mdview list` の番号は常に新しい順で、`mdview open <番号>` と対応します。番号は新しい描画が加わると変わるため、開く直前の一覧を使います。まだ一度も文書を描画していない場合は、`mdview open <file.md>` で最初の文書を追加します。一覧は各文書の最新プレビューだけを表示し、過去リビジョンは Reader 内で参照します。
 
-Reader では `P` で同じファイルの古い版へ戻り、`N` で新しい版へ進みます。各版の `Changes` と `Raw diff` は、そのターンの編集開始時点との差分です。`Cmd+K` または `/` で検索パレットを開き、`mdview list` に表示される全文書をタイトル・リポジトリ・ブランチ・パスから検索できます。
+Reader では `P` で同じファイルの古い版へ戻り、`N` で新しい版へ進みます。各版の `Changes` と `Raw diff` は、そのターンの編集開始時点との差分です。`R` / `C` / `D` で `Read` / `Changes` / `Raw diff` を直接切り替えられます。表示モードのボタンにフォーカスがある場合は `←` / `→` でも移動できます。入力欄や検索パレットの操作中は、これらの単キーショートカットは反応しません。`Cmd+K` または `/` で検索パレットを開き、`mdview list` に表示される全文書をタイトル・リポジトリ・ブランチ・パスから検索できます。本文中の相対的な `.md` / `.markdown` リンクを開くと、同じリポジトリ内のリンク先を mdview で描画して移動します。
 
-描画キャッシュは `~/Library/Caches/mdview/v1`、履歴の正本は `~/Library/Application Support/mdview/history`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。配信サーバーは `127.0.0.1:4320` のみで待ち受け、履歴APIはナビゲーション用メタデータだけを返します。Markdown スナップショット自体は配信しません。health 応答には互換性確認用のプロトコル版を含めます。
+描画キャッシュは `~/Library/Caches/mdview/v1`、履歴の正本は `~/Library/Application Support/mdview/history`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。Reader のJS、CSS、Mermaidは内容ハッシュ付きのアセットとして保存し、各HTMLが生成時のバージョンを固定参照します。配信サーバーは `127.0.0.1:4320` のみで待ち受け、履歴APIはナビゲーション用メタデータだけを返します。Markdown スナップショット自体は配信しません。health 応答には互換性確認用のプロトコル版を含めます。
 
 ## Hook の境界
 

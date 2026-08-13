@@ -13,10 +13,11 @@ import {
   markdownContentHash,
   readDocumentHistory,
   registerHistoryRevision,
+  storeHistoryCacheArtifacts,
   storeHistoryRenderedHtml,
   storeHistorySnapshot,
 } from "./history.mjs";
-import { catalogRoot, documentOutputPath, documentUrl } from "./paths.mjs";
+import { cacheRoot, catalogRoot, documentOutputPath, documentUrl } from "./paths.mjs";
 import { renderDocument } from "./render-document.mjs";
 import { pageTemplate } from "./template.mjs";
 
@@ -71,6 +72,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const documentPath = documentOutputPath(meta);
   const outputDir = path.dirname(documentPath);
   const tree = parseMarkdown(markdown);
+  rewriteLocalMarkdownLinks(tree, absolutePath);
   await Promise.all([
     prepareLocalImages(tree, absolutePath, meta, outputDir),
     prepareD2Diagrams(tree, outputDir),
@@ -78,7 +80,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const rendered = await renderDocument(tree, { changedLines });
   meta.changeCount = rendered.changeCount;
   meta.updatedLabel = options.updatedLabel || "Updated by Codex · just now";
-  const assetsDir = await ensureAssets();
+  const assets = await ensureAssets();
   await mkdir(outputDir, { recursive: true });
 
   const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
@@ -89,10 +91,17 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     headings: rendered.headings,
     meta,
     rawDiff,
-    assets: relativeWebPath(outputDir, assetsDir),
+    assets: Object.fromEntries(
+      Object.entries(assets).map(([name, filePath]) => [name, relativeWebPath(outputDir, filePath)]),
+    ),
   });
   const outputPath = documentPath.replace(/[.]html$/i, `.${revisionId}.html`);
   await storeHistoryRenderedHtml(documentId, revisionId, html, historyOptions);
+  const artifactPaths = [...Object.values(assets)];
+  for (const directory of [path.join(outputDir, "_assets"), path.join(outputDir, "_diagrams")]) {
+    if (await directoryExists(directory)) artifactPaths.push(directory);
+  }
+  await storeHistoryCacheArtifacts(artifactPaths, { ...historyOptions, cacheRoot: cacheRoot() });
   const commit = async () => {
     const incomingRenderedAt = catalogContext.renderedAt;
     const current = await catalogEntryForSource(absolutePath);
@@ -160,6 +169,49 @@ async function isFile(filePath) {
     if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
     throw error;
   }
+}
+
+async function directoryExists(directory) {
+  try {
+    return (await stat(directory)).isDirectory();
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+export function rewriteLocalMarkdownLinks(tree, sourcePath) {
+  const sourceId = catalogEntryId(sourcePath);
+  visit(tree, "link", (node) => {
+    const target = localMarkdownTarget(node.url);
+    if (!target) return;
+    const params = new URLSearchParams({ target: target.path });
+    if (target.fragment) params.set("fragment", target.fragment);
+    node.url = `/__mdview/follow/${sourceId}?${params}`;
+  });
+}
+
+function localMarkdownTarget(value) {
+  if (typeof value !== "string" || !value || value.startsWith("#")) return null;
+  const hashIndex = value.indexOf("#");
+  const targetPath = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
+  const fragment = hashIndex >= 0 ? value.slice(hashIndex + 1) : "";
+  if (
+    !targetPath ||
+    targetPath.includes("?") ||
+    targetPath.startsWith("/") ||
+    targetPath.startsWith("//") ||
+    /^[a-z][a-z0-9+.-]*:/i.test(targetPath)
+  ) return null;
+  if (/%(?:2f|5c)/i.test(targetPath)) return null;
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(targetPath);
+  } catch {
+    return null;
+  }
+  if (!/[.](?:md|markdown)$/i.test(decodedPath)) return null;
+  return { path: targetPath, fragment };
 }
 
 function outputPathForCatalogEntry(entry) {

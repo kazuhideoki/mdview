@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { catalogEntryId } from "./catalog.mjs";
@@ -104,6 +104,22 @@ export async function restoreHistoryRenderedHtml(revision, options = {}) {
   return target;
 }
 
+export async function storeHistoryCacheArtifacts(paths, options = {}) {
+  const cache = path.resolve(options.cacheRoot);
+  for (const inputPath of paths) {
+    await mirrorCacheEntry(inputPath, cache, path.join(resolveRoot(options), "cache-artifacts"));
+  }
+}
+
+export async function restoreHistoryCacheArtifacts(options = {}) {
+  const stored = path.join(resolveRoot(options), "cache-artifacts");
+  try {
+    await mirrorTree(stored, stored, path.resolve(options.cacheRoot));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
 export async function readHistoryForSource(sourcePath, options = {}) {
   return readDocumentHistory(catalogEntryId(sourcePath), options);
 }
@@ -158,6 +174,36 @@ function manifestPath(documentId, options) {
 function renderedHtmlPath(documentId, revisionId, options) {
   validateId(documentId);
   return path.join(resolveRoot(options), "rendered", documentId, `${revisionId}.html`);
+}
+
+async function mirrorCacheEntry(inputPath, cacheRoot, targetRoot) {
+  const absolute = path.resolve(inputPath);
+  const relative = path.relative(cacheRoot, absolute);
+  if (!relative || path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    throw new TypeError("History cache artifact is outside the cache root.");
+  }
+  const info = await stat(absolute);
+  if (info.isDirectory()) return mirrorTree(absolute, absolute, path.join(targetRoot, relative));
+  if (info.isFile()) return copyIfMissing(absolute, path.join(targetRoot, relative));
+}
+
+async function mirrorTree(directory, sourceRoot, targetRoot) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const source = path.join(directory, entry.name);
+    const target = path.join(targetRoot, path.relative(sourceRoot, source));
+    if (entry.isDirectory()) await mirrorTree(source, sourceRoot, targetRoot);
+    else if (entry.isFile()) await copyIfMissing(source, target);
+  }
+}
+
+async function copyIfMissing(source, target) {
+  try {
+    if ((await stat(target)).isFile()) return;
+  } catch (error) {
+    if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
+  }
+  await atomicWrite(target, await readFile(source));
 }
 
 async function atomicWriteJson(filePath, value) {

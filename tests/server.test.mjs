@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { historyRevisionId, registerHistoryRevision, storeHistoryRenderedHtml } from "../src/history.mjs";
+import { historyRevisionId, registerHistoryRevision, storeHistoryCacheArtifacts, storeHistoryRenderedHtml } from "../src/history.mjs";
 
 test("loopback server serves only cache files and rejects writes", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-"));
@@ -51,6 +51,10 @@ test("loopback server serves only cache files and rejects writes", async (contex
     turnId: null,
   });
   await storeHistoryRenderedHtml(registered.id, revisionId, "<!doctype html><title>restored</title>");
+  const durableAsset = path.join(cache, "assets", "viewer.test.js");
+  await mkdir(path.dirname(durableAsset), { recursive: true });
+  await writeFile(durableAsset, "window.mdviewRestored = true;\n");
+  await storeHistoryCacheArtifacts([durableAsset], { cacheRoot: cache });
   const { startServer } = await import(`../src/server.mjs?test=${Date.now()}`);
   const server = await startServer({ port: 0 });
   context.after(() => new Promise((resolve) => server.close(resolve)));
@@ -58,7 +62,7 @@ test("loopback server serves only cache files and rejects writes", async (contex
     const port = server.address().port;
     const health = await fetch(`http://127.0.0.1:${port}/__mdview_health`);
     assert.equal(health.status, 200);
-    assert.equal(await health.text(), "mdview/1\n");
+    assert.equal(await health.text(), "mdview/2\n");
 
     const page = await fetch(`http://127.0.0.1:${port}/documents/page.html`);
     assert.equal(page.status, 200);
@@ -107,11 +111,15 @@ test("loopback server serves only cache files and rejects writes", async (contex
     });
 
     await unlink(path.join(cache, "documents", "page.html"));
+    await unlink(durableAsset);
     const recoveredHistory = await fetch(`http://127.0.0.1:${port}/__mdview/history/${registered.id}`);
     assert.equal(recoveredHistory.status, 200);
     const restoredPage = await fetch(`http://127.0.0.1:${port}/documents/page.html`);
     assert.equal(restoredPage.status, 200);
     assert.match(await restoredPage.text(), /<title>restored/);
+    const restoredAsset = await fetch(`http://127.0.0.1:${port}/assets/viewer.test.js`);
+    assert.equal(restoredAsset.status, 200);
+    assert.match(await restoredAsset.text(), /mdviewRestored/);
 
     const invalidHistory = await fetch(`http://127.0.0.1:${port}/__mdview/history/not-an-id`);
     assert.equal(invalidHistory.status, 404);
@@ -172,4 +180,146 @@ test("catalog endpoint exposes every document in the same newest-first order as 
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
   }
+});
+
+test("following a relative Markdown link renders, registers, and redirects within mdview", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-follow-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const cache = path.join(root, "cache");
+  const repo = path.join(root, "repo");
+  const docs = path.join(repo, "docs");
+  await mkdir(docs, { recursive: true });
+  const sourcePath = path.join(docs, "index.md");
+  const targetPath = path.join(docs, "設計 guide.md");
+  await writeFile(sourcePath, "# Index\n\n[Guide](./%E8%A8%AD%E8%A8%88%20guide.md#利用方法)\n");
+  await writeFile(targetPath, "# Guide\n\n## 利用方法\n");
+
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?follow=${Date.now()}`);
+    const renderedSource = await renderMarkdownFile(sourcePath, {
+      meta: { repo: "repo", branch: "main", relativePath: "docs/index.md", repoRoot: repo },
+      catalogContext: { source: "manual" },
+    });
+    const html = await readFile(renderedSource.outputPath, "utf8");
+    const encodedHref = html.match(/href="(\/__mdview\/follow\/[^"]+)"/)?.[1];
+    assert.ok(encodedHref);
+    const followHref = encodedHref.replaceAll("&amp;", "&");
+
+    const { startServer } = await import(`../src/server.mjs?follow=${Date.now()}`);
+    const server = await startServer({ port: 0 });
+    context.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const crossSite = await fetch(`${origin}${followHref}`, {
+      redirect: "manual",
+      headers: { origin: "https://example.com", "sec-fetch-site": "cross-site" },
+    });
+    assert.equal(crossSite.status, 403);
+    assert.equal((await fetch(`${origin}/__mdview/catalog`).then((response) => response.json())).length, 1);
+
+    const followed = await fetch(`${origin}${followHref}`, { redirect: "manual" });
+    assert.equal(followed.status, 302);
+    assert.match(followed.headers.get("location"), /^\/documents\/.+[.]html#%E5%88%A9%E7%94%A8%E6%96%B9%E6%B3%95$/);
+
+    const catalog = await fetch(`${origin}/__mdview/catalog`).then((response) => response.json());
+    assert.equal(catalog.length, 2);
+    const linked = catalog.find((entry) => entry.source === "link");
+    assert.equal(linked?.source, "link");
+    assert.equal(linked?.title, "Guide");
+    assert.equal(linked?.relativePath, "設計 guide.md");
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("follow route rejects traversal, escaping symlinks, non-Markdown files, and HEAD side effects", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-follow-safety-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const cache = path.join(root, "cache");
+  const repo = path.join(root, "repo");
+  await mkdir(repo, { recursive: true });
+  const sourcePath = path.join(repo, "index.md");
+  const outsidePath = path.join(root, "outside.md");
+  await writeFile(sourcePath, "# Index\n");
+  await writeFile(outsidePath, "# Outside\n");
+  await writeFile(path.join(repo, "notes.txt"), "not Markdown\n");
+  await symlink(outsidePath, path.join(repo, "escape.md"));
+
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?safety=${Date.now()}`);
+    const renderedSource = await renderMarkdownFile(sourcePath, {
+      meta: { repo: "repo", branch: "main", relativePath: "index.md", repoRoot: repo },
+      catalogContext: { source: "manual" },
+    });
+    const sourceId = renderedSource.catalogEntry.id;
+    const { startServer } = await import(`../src/server.mjs?safety=${Date.now()}`);
+    const server = await startServer({ port: 0 });
+    context.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const follow = (target) => `${origin}/__mdview/follow/${sourceId}?target=${encodeURIComponent(target)}`;
+
+    for (const target of ["../outside.md", "./escape.md", "./notes.txt", "/tmp/outside.md", "file:outside.md"]) {
+      assert.equal((await fetch(follow(target), { redirect: "manual" })).status, 404, target);
+    }
+    assert.equal((await fetch(follow("../outside.md"), { method: "HEAD", redirect: "manual" })).status, 405);
+    const catalog = await fetch(`${origin}/__mdview/catalog`).then((response) => response.json());
+    assert.deepEqual(catalog.map((entry) => entry.relativePath), ["index.md"]);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("follow route preserves encoded filename characters and rejects encoded separators", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-follow-encoding-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const cache = path.join(root, "cache");
+  const repo = path.join(root, "repo");
+  await mkdir(path.join(repo, "a"), { recursive: true });
+  const sourcePath = path.join(repo, "index.md");
+  await Promise.all([
+    writeFile(sourcePath, "# Index\n"),
+    writeFile(path.join(repo, "a?b.md"), "# Question\n"),
+    writeFile(path.join(repo, "a#b.md"), "# Hash\n"),
+    writeFile(path.join(repo, "a", "b.md"), "# Nested\n"),
+  ]);
+
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?encoding=${Date.now()}`);
+    const renderedSource = await renderMarkdownFile(sourcePath, {
+      meta: { repo: "repo", branch: "main", relativePath: "index.md", repoRoot: repo },
+      catalogContext: { source: "manual" },
+    });
+    const { startServer } = await import(`../src/server.mjs?encoding=${Date.now()}`);
+    const server = await startServer({ port: 0 });
+    context.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const follow = (target) => `${origin}/__mdview/follow/${renderedSource.catalogEntry.id}?${new URLSearchParams({ target })}`;
+
+    for (const target of ["./a%3Fb.md", "./a%23b.md"]) {
+      const response = await fetch(follow(target), { redirect: "manual" });
+      assert.equal(response.status, 302, target);
+    }
+    assert.equal((await fetch(follow("./a%2Fb.md"), { redirect: "manual" })).status, 404);
+    const catalog = await fetch(`${origin}/__mdview/catalog`).then((response) => response.json());
+    assert.deepEqual(new Set(catalog.map((entry) => entry.title)), new Set(["Index", "Question", "Hash"]));
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("only a verified mdview daemon command is eligible for protocol upgrade restart", async () => {
+  const { isMdviewDaemonCommand } = await import(`../src/server.mjs?daemon=${Date.now()}`);
+  assert.equal(isMdviewDaemonCommand("/opt/homebrew/bin/node /repo/mdview/src/cli.mjs serve --daemon"), true);
+  assert.equal(isMdviewDaemonCommand("node /repo/other/src/cli.mjs serve --daemon"), false);
+  assert.equal(isMdviewDaemonCommand("python /repo/mdview/src/cli.mjs serve --daemon"), false);
+  assert.equal(isMdviewDaemonCommand("node /repo/mdview/src/cli.mjs render README.md"), false);
+  assert.equal(isMdviewDaemonCommand("node malicious.mjs serve --daemon"), false);
 });
