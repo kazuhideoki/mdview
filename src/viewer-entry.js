@@ -166,7 +166,14 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  const viewShortcuts = { r: "read", c: "changes", d: "raw" };
+  const viewShortcuts = {
+    r: "read",
+    "1": "read",
+    c: "changes",
+    "2": "changes",
+    d: "raw",
+    "3": "raw",
+  };
   const view = viewShortcuts[event.key.toLowerCase()];
   if (view && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !isEditableTarget(event.target)) {
     event.preventDefault();

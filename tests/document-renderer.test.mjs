@@ -54,9 +54,9 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.match(html, /type="checkbox" disabled checked/);
     assert.match(html, /class="shiki/);
     assert.match(html, /src="[.]\/_assets\/[a-f0-9]+[.]png"/);
-    assert.match(html, /data-view-target="read"[^>]+aria-keyshortcuts="R"[^>]+title="Read \(R\)"/);
-    assert.match(html, /data-view-target="changes"[^>]+aria-keyshortcuts="C"[^>]+title="Changes \(C\)"/);
-    assert.match(html, /data-view-target="raw"[^>]+aria-keyshortcuts="D"[^>]+title="Raw diff \(D\)"/);
+    assert.match(html, /data-view-target="read"[^>]+aria-keyshortcuts="R 1"[^>]+title="Read \(R \/ 1\)"/);
+    assert.match(html, /data-view-target="changes"[^>]+aria-keyshortcuts="C 2"[^>]+title="Changes \(C \/ 2\)"/);
+    assert.match(html, /data-view-target="raw"[^>]+aria-keyshortcuts="D 3"[^>]+title="Raw diff \(D \/ 3\)"/);
     assert.match(html, /href="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]css"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]js"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/mermaid[.]min[.][a-f0-9]{64}[.]js"/);
