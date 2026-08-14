@@ -377,6 +377,8 @@ function normalizeRevisionMeta(meta) {
   const normalized = {
     repo: meta.repo,
     branch: meta.branch,
+    head: meta.head || null,
+    worktree: meta.worktree || null,
     relativePath: meta.relativePath,
     repoRoot: meta.repoRoot || null,
     localAssets: normalizeLocalAssets(meta.localAssets),
@@ -395,6 +397,12 @@ function validateRevisionMeta(meta) {
   }
   if (meta.repoRoot !== null && (typeof meta.repoRoot !== "string" || !path.isAbsolute(meta.repoRoot))) {
     throw new TypeError("History revision meta repoRoot must be an absolute path or null.");
+  }
+  if (meta.head != null && (typeof meta.head !== "string" || !/^[a-f0-9]+$/i.test(meta.head))) {
+    throw new TypeError("History revision meta head must be a hexadecimal string or null.");
+  }
+  if (meta.worktree != null && (typeof meta.worktree !== "string" || !meta.worktree)) {
+    throw new TypeError("History revision meta worktree must be a non-empty string or null.");
   }
   if (meta.localAssets !== null) validateLocalAssets(meta.localAssets);
 }

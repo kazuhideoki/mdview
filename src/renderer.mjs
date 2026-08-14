@@ -24,6 +24,7 @@ import {
 import { cacheRoot, catalogRoot, documentOutputPath, documentUrl } from "./paths.mjs";
 import { renderDocument } from "./render-document.mjs";
 import { pageTemplate } from "./template.mjs";
+import { branchDisplay, resolveCodexSessionTitle } from "./codex-context.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,6 +43,8 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     documentMeta(absolutePath),
   ]);
   const meta = { ...detectedMeta, ...options.meta };
+  meta.branchDisplay = branchDisplay(meta.branch, meta.head);
+  meta.sessionTitle = await sessionTitle(catalogContext.sessionId, options);
   const documentId = catalogEntryId(absolutePath);
   const contentHash = markdownContentHash(markdown);
   const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
@@ -165,12 +168,16 @@ export async function renderHistoryRevision(documentId, revisionId, options = {}
   const absolutePath = history.sourcePath;
   const markdown = await readHistorySnapshot(revision.contentHash, historyOptions);
   const detectedMeta = await documentMeta(absolutePath, { includeChanges: false });
+  const revisionMeta = revision.meta || {};
   const meta = {
     ...detectedMeta,
-    ...(revision.meta || {}),
+    ...revisionMeta,
+    head: Object.hasOwn(revisionMeta, "head") ? revisionMeta.head : null,
     documentId,
     revisionId,
   };
+  meta.branchDisplay = branchDisplay(meta.branch, meta.head);
+  meta.sessionTitle = await sessionTitle(revision.sessionId, options);
   const outputPath = outputPathForDocumentHref(revision.href);
   const outputDir = path.dirname(outputPath);
   const beforePath = revision.beforeContentHash
@@ -204,6 +211,12 @@ export async function renderHistoryRevision(documentId, revisionId, options = {}
     updatedLabel: `Saved revision · ${revision.renderedAt}`,
   });
   return { ...result, outputPath, revision, meta };
+}
+
+async function sessionTitle(sessionId, options) {
+  if (!sessionId) return null;
+  const resolver = options.resolveSessionTitle || resolveCodexSessionTitle;
+  return resolver(sessionId);
 }
 
 async function renderMarkdownPage({

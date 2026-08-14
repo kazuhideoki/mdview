@@ -11,6 +11,7 @@ Codex が 1 ターンの間に編集した Markdown を検出し、読みやす�
 - Hook ではブラウザを開かず、必要なときだけ `mdview` などで手動表示
 - `~/.codex/hooks.json` の既存設定を保った install / status / uninstall
 - 描画済み文書の最新一覧と、リポジトリ・ブランチ・パスを横断する検索パレット
+- Reader 上部でリポジトリ、ワークツリー、ブランチ、パスを、下部の履歴操作で該当 Codex セッションの最新タイトルを確認
 - ターン単位の Markdown スナップショットと、同じファイルの過去リビジョン参照
 - 相対 Markdown リンクを mdview 内で開き、リンク先を描画済み文書へ自動登録
 
@@ -46,6 +47,8 @@ Reader では `P` で同じファイルの古い版へ戻り、`N` で新しい�
 描画キャッシュは `~/Library/Caches/mdview/v1`、履歴の正本は `~/Library/Application Support/mdview/history`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。文書を開くと、履歴に保存した Markdown スナップショット、差分、参照したローカル画像を現在の renderer・HTML template・内容ハッシュ付きJS/CSSで再描画します。このため、過去リビジョンの内容は固定したまま、Reader の機能とMarkdownの表示仕様には現在起動しているmdviewが反映されます。生成済みHTMLは互換用のfallbackを兼ねた削除可能なキャッシュであり、正本ではありません。
 
 配信サーバーは `127.0.0.1:4320` のみで待ち受け、履歴APIはナビゲーション用メタデータだけを返します。Markdown スナップショット自体は配信しません。health 応答にはプロトコル版とruntime sourceから計算したbuild IDを含め、`mdview`起動時に現在のCLIと一致しないdaemonだけを安全に再起動します。
+
+Hook から描画した版では、保存済みのセッションIDに完全一致する現在のセッション名だけを読み取ります。これは版の作成時点に固定した履歴ラベルではありません。Codex の `session_index.jsonl` にある最新の `thread_name` を優先し、見つからない場合だけローカル状態DBへフォールバックします。Readerを開くたびに再解決するため、後から変更した名前や、保存HTMLへfallbackした場合にも現在名を反映します。同じワークツリーの別セッションを推測して表示することはありません。手動描画ではセッション名を表示しません。detached HEAD の場合は、ブランチ欄に短縮コミットSHAを併記します。
 
 ## Hook の境界
 

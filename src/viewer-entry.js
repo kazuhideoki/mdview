@@ -593,12 +593,15 @@ function trapSearchFocus(event) {
 async function loadHistory() {
   const status = document.querySelector("[data-history-status]");
   if (!documentId || !revisionId || historyState.loading) {
-    if (status) status.textContent = "履歴はありません";
+    if (status) {
+      status.textContent = "履歴はありません";
+      refreshSessionTitle(status, "");
+    }
     return;
   }
   historyState.loading = true;
   try {
-    const response = await fetch(`/__mdview/history/${encodeURIComponent(documentId)}`, {
+    const response = await fetch(`/__mdview/history/${encodeURIComponent(documentId)}?revision=${encodeURIComponent(revisionId)}`, {
       headers: { accept: "application/json" },
       cache: "no-store",
     });
@@ -613,7 +616,10 @@ async function loadHistory() {
   } catch (error) {
     historyState.revisions = [];
     historyState.currentIndex = -1;
-    if (status) status.textContent = "履歴を読み込めませんでした";
+    if (status) {
+      status.textContent = "履歴を読み込めませんでした";
+      refreshSessionTitle(status, "");
+    }
     console.error("mdview: history fetch failed", error);
   } finally {
     historyState.loading = false;
@@ -633,6 +639,7 @@ function normalizeHistory(payload) {
       source: stringValue(value.source),
       sessionId: stringValue(value.sessionId),
       turnId: stringValue(value.turnId),
+      sessionTitle: stringValue(value.sessionTitle),
     };
   }).filter(Boolean);
 }
@@ -647,6 +654,7 @@ function refreshHistoryCursor() {
   if (!status) return;
   if (!current) {
     status.textContent = "履歴はありません";
+    refreshSessionTitle(status, "");
     return;
   }
   const source = current.source === "hook" || current.source === "codex-hook" ? "Codex" : "手動";
@@ -660,6 +668,39 @@ function refreshHistoryCursor() {
   time.textContent = formatHistoryTimestamp(current.renderedAt);
   detail.append(document.createTextNode(" · "), time, document.createTextNode(` · ${source}`));
   status.append(position, detail);
+  refreshSessionTitle(status, current.sessionTitle);
+}
+
+function refreshSessionTitle(status, value) {
+  let context = status.closest(".mdv-history-context");
+  if (!context) {
+    context = document.createElement("div");
+    context.className = "mdv-history-context";
+    status.before(context);
+    context.append(status);
+  }
+  let title = context.querySelector(".mdv-session-title");
+  if (!value) {
+    title?.remove();
+    return;
+  }
+  if (!title) {
+    title = document.createElement("span");
+    title.className = "mdv-session-title";
+    context.prepend(title);
+  }
+  title.replaceChildren(sessionTitleIcon(), document.createTextNode(value));
+  title.title = `Codexセッションの現在名: ${value}`;
+}
+
+function sessionTitleIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("mdv-icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", "#icon-chat-round-dots-linear");
+  svg.append(use);
+  return svg;
 }
 
 function navigateRevision(direction) {
