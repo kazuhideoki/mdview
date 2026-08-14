@@ -55,9 +55,9 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
         <span class="mdv-updated">${escape(meta.updatedLabel ?? "Rendered just now")}</span>
       </div>
       <nav class="mdv-view-switch" aria-label="表示モード">
-        <button type="button" data-view-target="read" aria-pressed="true" aria-keyshortcuts="R" title="Read (R)">Read</button>
-        <button type="button" data-view-target="changes" aria-pressed="false" aria-keyshortcuts="C" title="Changes (C)">Changes</button>
-        <button type="button" data-view-target="raw" aria-pressed="false" aria-keyshortcuts="D" title="Raw diff (D)">Raw diff</button>
+        <button type="button" data-view-target="read" aria-pressed="true" aria-keyshortcuts="R 1" title="Read (R / 1)">Read</button>
+        <button type="button" data-view-target="changes" aria-pressed="false" aria-keyshortcuts="C 2" title="Changes (C / 2)">Changes</button>
+        <button type="button" data-view-target="raw" aria-pressed="false" aria-keyshortcuts="D 3" title="Raw diff (D / 3)">Raw diff</button>
       </nav>
       <div class="mdv-top-actions">
         <button class="mdv-search-trigger" type="button" data-action="open-search" aria-label="文書を検索" aria-haspopup="dialog" aria-controls="mdv-search-dialog" aria-expanded="false">${icon("minimalistic-magnifier-linear")}<span>検索</span><kbd>⌘K</kbd></button>
