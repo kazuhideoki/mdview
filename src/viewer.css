@@ -113,6 +113,7 @@
   .mdv-search-option + .mdv-search-option { margin-top: 2px; }
   .mdv-search-option.is-active { border-left-color: var(--mdv-accent); background: rgba(84,215,239,.075); color: var(--mdv-fg); }
   .mdv-search-option.is-current:not(.is-active) { background: rgba(255,255,255,.025); }
+  .mdv-search-option.is-file-action:not(.is-active) { background: rgba(84,215,239,.025); }
   .mdv-search-option-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .mdv-search-option-main strong, .mdv-search-option-main > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mdv-search-option-main strong { font-size: 14px; font-weight: 620; }
@@ -122,6 +123,7 @@
   .mdv-search-option-context > :not(:first-child, .mdv-search-current) { padding-left: 7px; border-left: 1px solid #444642; }
   .mdv-search-option-context time { flex: 0 0 auto; max-width: none; color: #777a74; }
   .mdv-search-current { flex: 0 0 auto; padding: 3px 6px; border: 1px solid #356a73; border-radius: 3px; color: var(--mdv-accent); font-size: 10px; }
+  .mdv-search-file-action { flex: 0 0 auto; color: var(--mdv-accent); }
   .mdv-search-help { min-height: 42px; display: flex; align-items: center; gap: 18px; padding: 7px 16px; border-top: 1px solid var(--mdv-border-soft); color: var(--mdv-faint); font-size: 11px; }
   .mdv-search-help span { display: inline-flex; align-items: center; gap: 5px; }
   .mdv-search-help kbd { min-width: 22px; padding: 3px 4px; font-size: 10px; }

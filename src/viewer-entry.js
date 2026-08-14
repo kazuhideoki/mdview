@@ -15,6 +15,7 @@ const searchState = {
   activeIndex: -1,
   controller: null,
   restoreFocus: null,
+  opening: false,
 };
 const historyState = {
   revisions: [],
@@ -282,7 +283,11 @@ function setSearchBackgroundInert(inert) {
 function updateSearchResults() {
   if (!searchResults || !searchInput || !searchStatus) return;
   const query = searchInput.value.trim();
-  searchState.matches = rankCatalog(searchState.entries, query).slice(0, 80);
+  const fileEntry = markdownPathEntry(query);
+  searchState.matches = [
+    ...(fileEntry ? [fileEntry] : []),
+    ...rankCatalog(searchState.entries, query),
+  ].slice(0, 80);
   searchResults.replaceChildren();
 
   for (const [index, entry] of searchState.matches.entries()) {
@@ -292,7 +297,9 @@ function updateSearchResults() {
     option.dataset.resultIndex = String(index);
     option.setAttribute("role", "option");
     option.setAttribute("aria-selected", "false");
-    if (entry.current) {
+    if (entry.kind === "file") {
+      option.classList.add("is-file-action");
+    } else if (entry.current) {
       option.classList.add("is-current");
       option.setAttribute("aria-current", "page");
     }
@@ -307,12 +314,19 @@ function updateSearchResults() {
 
     const context = document.createElement("span");
     context.className = "mdv-search-option-context";
-    const repository = document.createElement("span");
-    repository.textContent = entry.repo;
-    const branch = document.createElement("span");
-    branch.textContent = entry.branch;
-    context.append(repository, branch);
-    if (entry.renderedAt) {
+    if (entry.kind === "file") {
+      const action = document.createElement("span");
+      action.className = "mdv-search-file-action";
+      action.textContent = "ファイルを開く";
+      context.append(action);
+    } else {
+      const repository = document.createElement("span");
+      repository.textContent = entry.repo;
+      const branch = document.createElement("span");
+      branch.textContent = entry.branch;
+      context.append(repository, branch);
+    }
+    if (entry.kind !== "file" && entry.renderedAt) {
       const renderedAt = document.createElement("time");
       renderedAt.dateTime = entry.renderedAt;
       renderedAt.textContent = formatRenderedAt(entry.renderedAt);
@@ -328,7 +342,7 @@ function updateSearchResults() {
     searchResults.append(option);
   }
 
-  if (!searchState.entries.length) {
+  if (!searchState.matches.length && !searchState.entries.length) {
     searchState.activeIndex = -1;
     searchInput.removeAttribute("aria-activedescendant");
     setSearchStatus("閲覧できる文書はまだありません。", "empty");
@@ -339,7 +353,7 @@ function updateSearchResults() {
   } else {
     const currentIndex = query ? 0 : searchState.matches.findIndex((entry) => entry.current);
     setActiveSearchResult(currentIndex >= 0 ? currentIndex : 0, false);
-    setSearchStatus(`${searchState.matches.length} 件の文書`, "ready");
+    setSearchStatus(fileEntry ? "EnterでMarkdownファイルを読み込みます。" : `${searchState.matches.length} 件の文書`, "ready");
   }
 }
 
@@ -365,9 +379,58 @@ function moveSearchSelection(direction) {
   setActiveSearchResult(searchState.activeIndex + direction);
 }
 
-function openSelectedSearchResult() {
+async function openSelectedSearchResult() {
   const entry = searchState.matches[searchState.activeIndex];
-  if (entry?.href) location.assign(entry.href);
+  if (entry?.kind === "file") {
+    await openMarkdownPath(entry.path);
+  } else if (entry?.href) {
+    location.assign(entry.href);
+  }
+}
+
+async function openMarkdownPath(filePath) {
+  if (searchState.opening) return;
+  searchState.opening = true;
+  searchInput.disabled = true;
+  setSearchStatus("Markdownファイルを読み込んでいます…", "loading");
+  try {
+    const response = await fetch("/__mdview/open", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ path: filePath }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = response.status === 404
+        ? "Markdownファイルが見つかりません。パスを確認してください。"
+        : response.status === 400
+          ? "絶対パスの .md または .markdown ファイルを入力してください。"
+          : "Markdownファイルを読み込めませんでした。もう一度お試しください。";
+      setSearchStatus(message, "error");
+      return;
+    }
+    const href = safeCatalogHref(payload.href);
+    if (!href) throw new Error("open endpoint returned an invalid document URL");
+    location.assign(href);
+  } catch (error) {
+    setSearchStatus("Markdownファイルを読み込めませんでした。もう一度お試しください。", "error");
+    console.error("mdview: Markdown path open failed", error);
+  } finally {
+    searchState.opening = false;
+    searchInput.disabled = false;
+    searchInput.focus();
+  }
+}
+
+function markdownPathEntry(value) {
+  const filePath = stringValue(value);
+  if ((!filePath.startsWith("/") && !filePath.startsWith("~/")) || !/[.](?:md|markdown)$/i.test(filePath)) return null;
+  return {
+    kind: "file",
+    title: filenameTitle(filePath) || "Markdownファイル",
+    relativePath: filePath,
+    path: filePath,
+  };
 }
 
 function normalizeCatalog(payload) {

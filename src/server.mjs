@@ -1,6 +1,7 @@
 import { constants, createReadStream } from "node:fs";
 import { mkdir, open, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { execFile, spawn } from "node:child_process";
@@ -22,7 +23,7 @@ const CONTENT_TYPES = new Map([
   [".gif", "image/gif"],
   [".webp", "image/webp"],
 ]);
-const PROTOCOL_VERSION = 5;
+const PROTOCOL_VERSION = 6;
 const followRenders = new Map();
 const execFileAsync = promisify(execFile);
 
@@ -32,9 +33,16 @@ export async function startServer(options = {}) {
   await mkdir(root, { recursive: true });
   const server = http.createServer(async (request, response) => {
     try {
-      if (!["GET", "HEAD"].includes(request.method)) return respond(response, 405, "Method Not Allowed");
-      const requestUrl = new URL(request.url, `http://${request.headers.host || "127.0.0.1"}`);
+      if (typeof request.headers.host !== "string") return respond(response, 400, "Bad Request");
+      const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+      if (!isLoopbackAuthority(request, requestUrl)) return respond(response, 421, "Misdirected Request");
       const pathname = requestUrl.pathname;
+      if (pathname === "/__mdview/open") {
+        if (request.method !== "POST") return respond(response, 405, "Method Not Allowed");
+        if (!isTrustedMutationRequest(request, requestUrl)) return respond(response, 403, "Forbidden");
+        return openMarkdownPath(request, response);
+      }
+      if (!["GET", "HEAD"].includes(request.method)) return respond(response, 405, "Method Not Allowed");
       if (pathname === "/__mdview_health") return respond(response, 200, `mdview/${PROTOCOL_VERSION}\n`, { "content-type": "text/plain; charset=utf-8" });
       if (pathname === "/__mdview/catalog") {
         const entries = (await readCatalog()).map(projectCatalogEntry);
@@ -192,6 +200,72 @@ function isTrustedFollowRequest(request, requestUrl) {
   return !fetchSite || fetchSite === "same-origin" || fetchSite === "none";
 }
 
+function isLoopbackAuthority(request, requestUrl) {
+  return requestUrl.hostname === "127.0.0.1"
+    && requestUrl.port === String(request.socket.localPort);
+}
+
+function isTrustedMutationRequest(request, requestUrl) {
+  return isTrustedFollowRequest(request, requestUrl)
+    && request.headers["content-type"]?.split(";", 1)[0].trim().toLowerCase() === "application/json";
+}
+
+async function openMarkdownPath(request, response) {
+  let input;
+  try {
+    input = await readJsonBody(request);
+  } catch (error) {
+    const status = error?.code === "BODY_TOO_LARGE" ? 413 : 400;
+    return respondJson(response, status, { error: status === 413 ? "Request body is too large." : "Invalid JSON request." });
+  }
+
+  const requestedPath = typeof input?.path === "string" ? input.path.trim() : "";
+  if (!requestedPath || requestedPath.includes("\0") || !/[.](?:md|markdown)$/i.test(requestedPath)) {
+    return respondJson(response, 400, { error: "Enter an absolute .md or .markdown file path." });
+  }
+  const expandedPath = requestedPath.startsWith(`~${path.sep}`)
+    ? path.join(os.homedir(), requestedPath.slice(2))
+    : requestedPath;
+  if (!path.isAbsolute(expandedPath)) {
+    return respondJson(response, 400, { error: "Enter an absolute .md or .markdown file path." });
+  }
+
+  let canonical;
+  try {
+    canonical = await realpath(expandedPath);
+    if (!(await stat(canonical)).isFile()) return respondJson(response, 404, { error: "Markdown file was not found." });
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return respondJson(response, 404, { error: "Markdown file was not found." });
+    }
+    throw error;
+  }
+  if (!/[.](?:md|markdown)$/i.test(canonical)) {
+    return respondJson(response, 400, { error: "Enter an absolute .md or .markdown file path." });
+  }
+
+  const rendered = await renderOpenedMarkdown(canonical, {
+    updatedLabel: "Opened from command palette · just now",
+    source: "manual",
+  });
+  return respondJson(response, 200, { href: rendered.catalogEntry.href });
+}
+
+async function readJsonBody(request, limit = 8 * 1024) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) {
+      const error = new Error("Request body is too large.");
+      error.code = "BODY_TOO_LARGE";
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
 async function coalescedLinkedRender(targetPath) {
   if (followRenders.has(targetPath)) return followRenders.get(targetPath);
   const operation = renderOpenedMarkdown(targetPath).finally(() => followRenders.delete(targetPath));
@@ -199,7 +273,7 @@ async function coalescedLinkedRender(targetPath) {
   return operation;
 }
 
-async function renderOpenedMarkdown(targetPath) {
+async function renderOpenedMarkdown(targetPath, options = {}) {
   const handle = await open(targetPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const sourceStat = await handle.stat();
@@ -208,8 +282,8 @@ async function renderOpenedMarkdown(targetPath) {
     return renderMarkdownFile(targetPath, {
       sourceContents,
       sourceStat,
-      updatedLabel: "Opened from Markdown link · just now",
-      catalogContext: { source: "link" },
+      updatedLabel: options.updatedLabel || "Opened from Markdown link · just now",
+      catalogContext: { source: options.source || "link" },
     });
   } finally {
     await handle.close();
@@ -357,4 +431,13 @@ async function isPortInUse(port) {
 function respond(response, status, body, headers = {}) {
   response.writeHead(status, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff", ...headers });
   response.end(body);
+}
+
+function respondJson(response, status, value) {
+  const body = `${JSON.stringify(value)}\n`;
+  respond(response, status, body, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "content-length": Buffer.byteLength(body),
+  });
 }

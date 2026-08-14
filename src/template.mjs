@@ -98,7 +98,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
         <h2 class="mdv-visually-hidden" id="mdv-search-title">文書を検索</h2>
         <div class="mdv-search-input-row">
           ${icon("minimalistic-magnifier-linear")}
-          <input id="mdv-search-input" type="search" role="combobox" aria-label="文書を検索" aria-autocomplete="list" aria-controls="mdv-search-results" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="文書名、リポジトリ、ブランチ、パスで検索">
+          <input id="mdv-search-input" type="search" role="combobox" aria-label="文書を検索、またはMarkdownファイルを開く" aria-autocomplete="list" aria-controls="mdv-search-results" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="文書を検索、またはMarkdownファイルの絶対パスを入力">
           <kbd>Esc</kbd>
           <button type="button" data-action="close-search" aria-label="検索を閉じる">${icon("close-circle-linear")}</button>
         </div>
