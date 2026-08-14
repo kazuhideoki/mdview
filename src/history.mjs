@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { catalogEntryId } from "./catalog.mjs";
@@ -41,8 +41,12 @@ export async function storeHistorySnapshot(markdown, options = {}) {
   const target = historySnapshotPath(contentHash, options);
   await mkdir(path.dirname(target), { recursive: true });
   try {
-    await stat(target);
-    return { contentHash, path: target, created: false };
+    const existing = await readFile(target, "utf8");
+    if (markdownContentHash(existing) === contentHash) {
+      return { contentHash, path: target, created: false, repaired: false };
+    }
+    await atomicWrite(target, markdown);
+    return { contentHash, path: target, created: false, repaired: true };
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
@@ -50,7 +54,7 @@ export async function storeHistorySnapshot(markdown, options = {}) {
   try {
     await writeFile(temp, markdown, { encoding: "utf8", flag: "wx", mode: 0o600 });
     await rename(temp, target);
-    return { contentHash, path: target, created: true };
+    return { contentHash, path: target, created: true, repaired: false };
   } catch (error) {
     await unlink(temp).catch(() => {});
     if (error?.code === "EEXIST") return { contentHash, path: target, created: false };
@@ -73,7 +77,73 @@ export async function readDocumentHistory(documentId, options = {}) {
 }
 
 export async function readHistorySnapshot(contentHash, options = {}) {
-  return readFile(historySnapshotPath(contentHash, options), "utf8");
+  const contents = await readFile(historySnapshotPath(contentHash, options), "utf8");
+  if (markdownContentHash(contents) !== contentHash) {
+    const error = new Error(`History snapshot does not match content hash: ${contentHash}`);
+    error.code = "HISTORY_SNAPSHOT_CORRUPT";
+    throw error;
+  }
+  return contents;
+}
+
+export async function storeHistoryRawDiff(documentId, revisionId, rawDiff, options = {}) {
+  validateId(documentId);
+  validateId(revisionId);
+  if (typeof rawDiff !== "string") throw new TypeError("History raw diff must be a string.");
+  const target = rawDiffPath(documentId, revisionId, options);
+  await mkdir(path.dirname(target), { recursive: true });
+  try {
+    await writeFile(target, rawDiff, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    return { path: target, created: true };
+  } catch (error) {
+    if (error?.code === "EEXIST") return { path: target, created: false };
+    throw error;
+  }
+}
+
+export async function readHistoryRawDiff(documentId, revisionId, options = {}) {
+  validateId(documentId);
+  validateId(revisionId);
+  try {
+    return await readFile(rawDiffPath(documentId, revisionId, options), "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
+    throw error;
+  }
+}
+
+export async function findHistoryRevisionByHref(href, options = {}) {
+  let pathname;
+  try {
+    const url = new URL(href, "http://mdview.local");
+    if (url.origin !== "http://mdview.local" || url.search || url.hash) return null;
+    pathname = url.pathname;
+  } catch {
+    return null;
+  }
+  const directory = path.join(resolveRoot(options), "documents");
+  let files;
+  try {
+    files = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
+    throw error;
+  }
+  for (const file of files) {
+    if (!file.isFile() || !file.name.endsWith(".json")) continue;
+    const documentId = path.basename(file.name, ".json");
+    if (!ID_PATTERN.test(documentId)) continue;
+    const manifest = await readDocumentHistory(documentId, options);
+    const revision = manifest.revisions.find((candidate) => {
+      try {
+        return new URL(candidate.href, "http://mdview.local").pathname === pathname;
+      } catch {
+        return false;
+      }
+    });
+    if (revision) return { manifest, revision };
+  }
+  return null;
 }
 
 export async function storeHistoryRenderedHtml(documentId, revisionId, html, options = {}) {
@@ -120,6 +190,28 @@ export async function restoreHistoryCacheArtifacts(options = {}) {
   }
 }
 
+export async function restoreHistoryCacheArtifact(inputPath, options = {}) {
+  const cache = path.resolve(options.cacheRoot);
+  const absolute = path.resolve(inputPath);
+  const relative = path.relative(cache, absolute);
+  if (!relative || path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    throw new TypeError("History cache artifact target is outside the cache root.");
+  }
+  try {
+    if ((await stat(absolute)).isFile()) return absolute;
+  } catch (error) {
+    if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
+  }
+  const stored = path.join(resolveRoot(options), "cache-artifacts", relative);
+  const canonicalStored = await realpath(stored);
+  const storedRoot = await realpath(path.join(resolveRoot(options), "cache-artifacts"));
+  if (!canonicalStored.startsWith(`${storedRoot}${path.sep}`) || !(await stat(canonicalStored)).isFile()) {
+    throw new TypeError("History cache artifact source is invalid.");
+  }
+  await copyIfMissing(canonicalStored, absolute);
+  return absolute;
+}
+
 export async function readHistoryForSource(sourcePath, options = {}) {
   return readDocumentHistory(catalogEntryId(sourcePath), options);
 }
@@ -137,6 +229,7 @@ export async function registerHistoryRevision(input, options = {}) {
     turnId: input.turnId ?? null,
     beforeContentHash: input.beforeContentHash ?? null,
     contentHash: input.contentHash,
+    meta: normalizeRevisionMeta(input.meta),
   };
   validateRevision(revision);
   const duplicate = current.revisions.find((candidate) => candidate.id === revision.id);
@@ -174,6 +267,10 @@ function manifestPath(documentId, options) {
 function renderedHtmlPath(documentId, revisionId, options) {
   validateId(documentId);
   return path.join(resolveRoot(options), "rendered", documentId, `${revisionId}.html`);
+}
+
+function rawDiffPath(documentId, revisionId, options) {
+  return path.join(resolveRoot(options), "diffs", documentId, `${revisionId}.patch`);
 }
 
 async function mirrorCacheEntry(inputPath, cacheRoot, targetRoot) {
@@ -270,6 +367,54 @@ function validateRevision(revision) {
   for (const field of ["sessionId", "turnId"]) {
     if (revision[field] !== null && (typeof revision[field] !== "string" || !revision[field])) {
       throw new TypeError(`History revision ${field} must be a non-empty string or null.`);
+    }
+  }
+  if (revision.meta !== null && revision.meta !== undefined) validateRevisionMeta(revision.meta);
+}
+
+function normalizeRevisionMeta(meta) {
+  if (!meta || typeof meta !== "object") return null;
+  const normalized = {
+    repo: meta.repo,
+    branch: meta.branch,
+    relativePath: meta.relativePath,
+    repoRoot: meta.repoRoot || null,
+    localAssets: normalizeLocalAssets(meta.localAssets),
+  };
+  try {
+    validateRevisionMeta(normalized);
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function validateRevisionMeta(meta) {
+  for (const field of ["repo", "branch", "relativePath"]) {
+    if (typeof meta[field] !== "string" || !meta[field]) throw new TypeError(`History revision meta requires ${field}.`);
+  }
+  if (meta.repoRoot !== null && (typeof meta.repoRoot !== "string" || !path.isAbsolute(meta.repoRoot))) {
+    throw new TypeError("History revision meta repoRoot must be an absolute path or null.");
+  }
+  if (meta.localAssets !== null) validateLocalAssets(meta.localAssets);
+}
+
+function normalizeLocalAssets(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const normalized = Object.fromEntries(Object.entries(value).filter(([source, target]) => (
+    typeof source === "string"
+      && source.length > 0
+      && typeof target === "string"
+      && /^[.]\/_assets\/[a-f0-9]{20}[.][a-z0-9]+$/i.test(target)
+  )));
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function validateLocalAssets(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("History localAssets must be an object.");
+  for (const [source, target] of Object.entries(value)) {
+    if (!source || typeof target !== "string" || !/^[.]\/_assets\/[a-f0-9]{20}[.][a-z0-9]+$/i.test(target)) {
+      throw new TypeError("History localAssets contains an invalid mapping.");
     }
   }
 }

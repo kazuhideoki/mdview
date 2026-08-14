@@ -37,7 +37,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
   const previousCache = process.env.MDVIEW_CACHE_DIR;
   process.env.MDVIEW_CACHE_DIR = cache;
   try {
-    const { renderMarkdownFile } = await import(`../src/renderer.mjs?test=${Date.now()}`);
+    const { renderHistoryRevision, renderMarkdownFile } = await import(`../src/renderer.mjs?test=${Date.now()}`);
     const result = await renderMarkdownFile(markdownPath, {
       historyRoot,
       changedLines: [1, 5],
@@ -79,6 +79,13 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.equal((await readdir(path.join(cache, "catalog"))).length, 1);
     assert.match(html, new RegExp(`data-document-id="${result.catalogEntry.id}"`));
     assert.equal(result.historyRevision.contentHash.length, 64);
+    const copiedAsset = path.join(path.dirname(result.outputPath), "_assets", copied[0]);
+    await unlink(copiedAsset);
+    await unlink(path.join(docs, "pixel.png"));
+    await unlink(markdownPath);
+    const rerendered = await renderHistoryRevision(result.catalogEntry.id, result.historyRevision.id, { historyRoot });
+    assert.match(rerendered.html, new RegExp(`src="[.]\/_assets\/${copied[0]}"`));
+    assert.deepEqual(await readFile(copiedAsset), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -88,6 +95,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
 test("rewrites only relative Markdown links through the mdview follow route", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-links-"));
   const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
   const markdownPath = path.join(root, "index.md");
   await writeFile(markdownPath, [
     "# Links",
@@ -107,6 +115,7 @@ test("rewrites only relative Markdown links through the mdview follow route", as
     const { catalogEntryId } = await import(`../src/catalog.mjs?links=${Date.now()}`);
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?links=${Date.now()}`);
     const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
       meta: { repo: "links", branch: "main", relativePath: "index.md", repoRoot: root },
       catalogContext: { source: "manual" },
     });

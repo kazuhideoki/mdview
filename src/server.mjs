@@ -6,11 +6,12 @@ import path from "node:path";
 import process from "node:process";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { appBuildId } from "./app-build.mjs";
 import { readCatalog } from "./catalog.mjs";
-import { readDocumentHistory, restoreHistoryCacheArtifacts, restoreHistoryRenderedHtml } from "./history.mjs";
+import { findHistoryRevisionByHref, readDocumentHistory, restoreHistoryCacheArtifacts, restoreHistoryRenderedHtml } from "./history.mjs";
 import { documentMeta } from "./document.mjs";
 import { cacheRoot, logPath, runtimeRoot, serverPort } from "./paths.mjs";
-import { renderMarkdownFile } from "./renderer.mjs";
+import { renderHistoryRevision, renderMarkdownFile } from "./renderer.mjs";
 
 const CONTENT_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -23,7 +24,7 @@ const CONTENT_TYPES = new Map([
   [".gif", "image/gif"],
   [".webp", "image/webp"],
 ]);
-const PROTOCOL_VERSION = 6;
+const PROTOCOL_VERSION = 7;
 const followRenders = new Map();
 const execFileAsync = promisify(execFile);
 
@@ -43,7 +44,9 @@ export async function startServer(options = {}) {
         return openMarkdownPath(request, response);
       }
       if (!["GET", "HEAD"].includes(request.method)) return respond(response, 405, "Method Not Allowed");
-      if (pathname === "/__mdview_health") return respond(response, 200, `mdview/${PROTOCOL_VERSION}\n`, { "content-type": "text/plain; charset=utf-8" });
+      if (pathname === "/__mdview_health") {
+        return respond(response, 200, `mdview/${PROTOCOL_VERSION} ${(await appBuildId())}\n`, { "content-type": "text/plain; charset=utf-8" });
+      }
       if (pathname === "/__mdview/catalog") {
         const entries = (await readCatalog()).map(projectCatalogEntry);
         const body = `${JSON.stringify(entries)}\n`;
@@ -85,6 +88,39 @@ export async function startServer(options = {}) {
       if (!route) {
         return respond(response, 404, "Not Found");
       }
+      const requestedView = requestUrl.searchParams.get("view");
+      if (route === "documents" && pathname.toLowerCase().endsWith(".html")) {
+        const saved = await findHistoryRevisionByHref(pathname);
+        if (saved) {
+          let renderError = null;
+          try {
+            const rendered = await renderHistoryRevision(saved.manifest.documentId, saved.revision.id);
+            if (rendered) {
+              const body = isReaderView(requestedView)
+                ? applyInitialView(rendered.html, requestedView)
+                : rendered.html;
+              return respond(response, 200, request.method === "HEAD" ? "" : body, {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-store",
+                "content-length": Buffer.byteLength(body),
+                "x-content-type-options": "nosniff",
+              });
+            }
+          } catch (error) {
+            renderError = error;
+            try {
+              await restoreHistoryCacheArtifacts({ cacheRoot: root });
+              await restoreHistoryRenderedHtml(saved.revision, {
+                documentId: saved.manifest.documentId,
+                cacheRoot: root,
+              });
+            } catch (restoreError) {
+              if (restoreError?.code !== "ENOENT" && restoreError?.code !== "ENOTDIR") throw restoreError;
+              throw renderError;
+            }
+          }
+        }
+      }
       const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
       const candidate = path.resolve(root, ...segments);
       const allowedRoot = path.join(root, route);
@@ -104,7 +140,6 @@ export async function startServer(options = {}) {
           : "no-cache",
         "x-content-type-options": "nosniff",
       };
-      const requestedView = requestUrl.searchParams.get("view");
       if (route === "documents" && extension === ".html" && isReaderView(requestedView)) {
         const body = applyInitialView(await readFile(canonical, "utf8"), requestedView);
         response.writeHead(200, { ...headers, "content-length": Buffer.byteLength(body) });
@@ -346,9 +381,11 @@ function projectHistoryRevision(revision) {
 
 export async function ensureServer(options = {}) {
   const port = options.port || serverPort();
-  const runningVersion = await mdviewServerVersion(port);
-  if (runningVersion === PROTOCOL_VERSION) return { port, started: false };
-  if (runningVersion !== null) await stopLegacyMdviewServer(port, options);
+  const [runningIdentity, expectedBuildId] = await Promise.all([mdviewServerIdentity(port), appBuildId()]);
+  if (runningIdentity?.protocol === PROTOCOL_VERSION && runningIdentity.buildId === expectedBuildId) {
+    return { port, started: false };
+  }
+  if (runningIdentity !== null) await stopLegacyMdviewServer(port, options);
   if (await isPortInUse(port)) throw new Error(`Port ${port} is already used by another process. Set MDVIEW_PORT to another port.`);
   const runtime = runtimeRoot();
   const log = logPath();
@@ -371,18 +408,26 @@ export async function ensureServer(options = {}) {
 }
 
 export async function isMdviewServer(port = serverPort()) {
-  return (await mdviewServerVersion(port)) === PROTOCOL_VERSION;
+  const [identity, expectedBuildId] = await Promise.all([mdviewServerIdentity(port), appBuildId()]);
+  return identity?.protocol === PROTOCOL_VERSION && identity.buildId === expectedBuildId;
 }
 
-async function mdviewServerVersion(port = serverPort()) {
+async function mdviewServerIdentity(port = serverPort()) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/__mdview_health`, { signal: AbortSignal.timeout(300) });
     if (!response.ok) return null;
-    const match = (await response.text()).match(/^mdview\/(\d+)\n$/);
-    return match ? Number(match[1]) : null;
+    return parseMdviewHealth(await response.text());
   } catch {
     return null;
   }
+}
+
+export function parseMdviewHealth(value) {
+  if (typeof value !== "string") return null;
+  const current = value.match(/^mdview\/(\d+) ([a-f0-9]{24})\n$/);
+  if (current) return { protocol: Number(current[1]), buildId: current[2] };
+  const legacy = value.match(/^mdview\/(\d+)\n$/);
+  return legacy ? { protocol: Number(legacy[1]), buildId: null } : null;
 }
 
 export async function stopLegacyMdviewServer(port, options = {}) {

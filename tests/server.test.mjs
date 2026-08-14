@@ -58,6 +58,9 @@ test("loopback server serves cache files and limits file opening to trusted requ
     turnId: null,
   });
   await storeHistoryRenderedHtml(registered.id, revisionId, "<!doctype html><title>restored</title>");
+  const corruptSnapshot = path.join(process.env.MDVIEW_RUNTIME_DIR, "history", "objects", `${"a".repeat(64)}.md`);
+  await mkdir(path.dirname(corruptSnapshot), { recursive: true });
+  await writeFile(corruptSnapshot, "corrupt snapshot\n");
   const durableAsset = path.join(cache, "assets", "viewer.test.js");
   await mkdir(path.dirname(durableAsset), { recursive: true });
   await writeFile(durableAsset, "window.mdviewRestored = true;\n");
@@ -69,7 +72,7 @@ test("loopback server serves cache files and limits file opening to trusted requ
     const port = server.address().port;
     const health = await fetch(`http://127.0.0.1:${port}/__mdview_health`);
     assert.equal(health.status, 200);
-    assert.equal(await health.text(), "mdview/6\n");
+    assert.match(await health.text(), /^mdview\/7 [a-f0-9]{24}\n$/);
 
     const page = await fetch(`http://127.0.0.1:${port}/documents/page.html`);
     assert.equal(page.status, 200);
@@ -157,10 +160,42 @@ test("loopback server serves cache files and limits file opening to trusted requ
       body: JSON.stringify({ path: openedPath }),
     });
     assert.equal(opened.status, 200);
-    assert.match((await opened.json()).href, /^\/documents\/.+[.]html$/);
+    const openedPayload = await opened.json();
+    assert.match(openedPayload.href, /^\/documents\/.+[.]html$/);
     const openedCatalog = await fetch(`http://127.0.0.1:${port}/__mdview/catalog`).then((response) => response.json());
     assert.equal(openedCatalog[0].title, "Opened from palette");
     assert.equal(openedCatalog[0].source, "manual");
+    const openedOutput = path.resolve(cache, ...new URL(openedPayload.href, "http://mdview.local").pathname.split("/").filter(Boolean).map(decodeURIComponent));
+    await writeFile(openedOutput, "<!doctype html><title>obsolete viewer</title>");
+    await writeFile(openedPath, "# Changed after capture\n");
+    const currentAppPage = await fetch(`http://127.0.0.1:${port}${openedPayload.href}`);
+    const currentAppHtml = await currentAppPage.text();
+    assert.equal(currentAppPage.status, 200);
+    assert.equal(currentAppPage.headers.get("cache-control"), "no-store");
+    assert.match(currentAppHtml, /<title>Opened from palette · mdview<\/title>/);
+    assert.match(currentAppHtml, /aria-label="文書を検索、またはMarkdownファイルを開く"/);
+    assert.match(currentAppHtml, /viewer[.][a-f0-9]{64}[.]js/);
+    assert.doesNotMatch(currentAppHtml, /obsolete viewer|Changed after capture/);
+    await unlink(openedOutput);
+    const withoutHtmlCache = await fetch(`http://127.0.0.1:${port}${openedPayload.href}`);
+    assert.equal(withoutHtmlCache.status, 200);
+    assert.match(await withoutHtmlCache.text(), /Opened from palette/);
+    const catalogWithoutHtmlCache = await fetch(`http://127.0.0.1:${port}/__mdview/catalog`).then((response) => response.json());
+    assert.ok(catalogWithoutHtmlCache.some((entry) => entry.href === openedPayload.href));
+    const changed = await fetch(`http://127.0.0.1:${port}/__mdview/open`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` },
+      body: JSON.stringify({ path: openedPath }),
+    });
+    const changedPayload = await changed.json();
+    await writeFile(openedPath, "# Not captured\n");
+    const changedPage = await fetch(`http://127.0.0.1:${port}${changedPayload.href}?view=changes`);
+    const changedHtml = await changedPage.text();
+    assert.equal(changedPage.status, 200);
+    assert.match(changedHtml, /data-view="changes"/);
+    assert.match(changedHtml, /data-diff-kind="removed"[^>]*>Opened from palette<\/h1>/);
+    assert.match(changedHtml, /data-diff-kind="added"[^>]*>Changed after capture<\/h1>/);
+    assert.doesNotMatch(changedHtml, /Not captured/);
 
     for (const [label, requestPath, status] of [
       ["missing", path.join(root, "repo", "missing.md"), 404],
@@ -387,10 +422,13 @@ test("follow route preserves encoded filename characters and rejects encoded sep
 });
 
 test("only a verified mdview daemon command is eligible for protocol upgrade restart", async () => {
-  const { isMdviewDaemonCommand } = await import(`../src/server.mjs?daemon=${Date.now()}`);
+  const { isMdviewDaemonCommand, parseMdviewHealth } = await import(`../src/server.mjs?daemon=${Date.now()}`);
   assert.equal(isMdviewDaemonCommand("/opt/homebrew/bin/node /repo/mdview/src/cli.mjs serve --daemon"), true);
   assert.equal(isMdviewDaemonCommand("node /repo/other/src/cli.mjs serve --daemon"), false);
   assert.equal(isMdviewDaemonCommand("python /repo/mdview/src/cli.mjs serve --daemon"), false);
   assert.equal(isMdviewDaemonCommand("node /repo/mdview/src/cli.mjs render README.md"), false);
   assert.equal(isMdviewDaemonCommand("node malicious.mjs serve --daemon"), false);
+  assert.deepEqual(parseMdviewHealth(`mdview/7 ${"a".repeat(24)}\n`), { protocol: 7, buildId: "a".repeat(24) });
+  assert.deepEqual(parseMdviewHealth("mdview/6\n"), { protocol: 6, buildId: null });
+  assert.equal(parseMdviewHealth(`mdview/6 ${"a".repeat(24)}\nextra`), null);
 });

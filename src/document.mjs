@@ -203,14 +203,16 @@ export async function rawDiffForFile(filePath, repoRoot) {
   return [staged, unstaged].filter(Boolean).join("\n");
 }
 
-export async function documentMeta(filePath) {
+export async function documentMeta(filePath, options = {}) {
   const absolutePath = path.resolve(filePath);
   const fileDir = path.dirname(absolutePath);
   const repoRoot = await git(["rev-parse", "--show-toplevel"], fileDir);
   const branch = repoRoot ? await git(["branch", "--show-current"], repoRoot) : "";
   const relativePath = repoRoot ? path.relative(repoRoot, absolutePath) : path.basename(absolutePath);
   const repo = repoRoot ? path.basename(repoRoot) : path.basename(fileDir);
-  const changedLines = await changedLinesForFile(absolutePath, repoRoot);
+  const changedLines = options.includeChanges === false
+    ? []
+    : await changedLinesForFile(absolutePath, repoRoot);
   return {
     absolutePath,
     repoRoot,

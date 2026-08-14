@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { cacheRoot, catalogRoot, documentHref } from "./paths.mjs";
+import { cacheRoot, catalogRoot, documentHref, historyRoot } from "./paths.mjs";
 
 const CATALOG_VERSION = 1;
 const ID_PATTERN = /^[a-f0-9]{24}$/;
@@ -89,8 +89,9 @@ export async function readCatalog(options = {}) {
         const record = JSON.parse(await readFile(path.join(directory, file.name), "utf8"));
         const entry = catalogEntryFromRecord(record);
         if (!entry || entry.id !== path.basename(file.name, ".json")) return null;
-        if (!(await hasValidMarkdownSource(entry))) return null;
-        if (!(await hasValidRenderedHtml(entry, root))) return null;
+        const durable = await hasDurableRevision(entry);
+        if (!durable && !(await hasValidMarkdownSource(entry))) return null;
+        if (!durable && !(await hasValidRenderedHtml(entry, root))) return null;
         return entry;
       } catch (error) {
         if (error instanceof SyntaxError || error?.code === "ENOENT" || error?.code === "ENOTDIR") return null;
@@ -179,6 +180,29 @@ async function hasValidMarkdownSource(entry) {
   if (!/[.](?:md|markdown)$/i.test(entry.sourcePath)) return false;
   try {
     return (await stat(entry.sourcePath)).isFile();
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+async function hasDurableRevision(entry) {
+  const root = path.resolve(historyRoot());
+  let record;
+  try {
+    record = JSON.parse(await readFile(path.join(root, "documents", `${entry.id}.json`), "utf8"));
+  } catch (error) {
+    if (error instanceof SyntaxError || error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
+    throw error;
+  }
+  if (record?.documentId !== entry.id || record.sourcePath !== entry.sourcePath || !Array.isArray(record.revisions)) return false;
+  const revision = record.revisions.find((candidate) => candidate?.href === entry.href && /^[a-f0-9]{64}$/.test(candidate?.contentHash));
+  if (!revision) return false;
+  const objects = path.join(root, "objects");
+  const snapshot = path.join(objects, `${revision.contentHash}.md`);
+  try {
+    const [canonicalObjects, canonicalSnapshot] = await Promise.all([realpath(objects), realpath(snapshot)]);
+    return isContained(canonicalSnapshot, canonicalObjects) && (await stat(canonicalSnapshot)).isFile();
   } catch (error) {
     if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
     throw error;
