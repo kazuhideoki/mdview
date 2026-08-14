@@ -12,6 +12,7 @@ import { findHistoryRevisionByHref, readDocumentHistory, restoreHistoryCacheArti
 import { documentMeta } from "./document.mjs";
 import { cacheRoot, logPath, runtimeRoot, serverPort } from "./paths.mjs";
 import { renderHistoryRevision, renderMarkdownFile } from "./renderer.mjs";
+import { resolveCodexSessionTitle } from "./codex-context.mjs";
 
 const CONTENT_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -59,7 +60,18 @@ export async function startServer(options = {}) {
       if (pathname.startsWith("/__mdview/history/")) {
         const documentId = decodeURIComponent(pathname.slice("/__mdview/history/".length));
         if (!/^[a-f0-9]{24}$/.test(documentId)) return respond(response, 404, "Not Found");
+        const requestedRevisionId = requestUrl.searchParams.get("revision");
+        if (requestedRevisionId !== null && !/^[a-f0-9]{24}$/.test(requestedRevisionId)) {
+          return respond(response, 400, "Bad Request");
+        }
         const history = await readDocumentHistory(documentId);
+        const requestedRevision = requestedRevisionId
+          ? history.revisions.find((revision) => revision.id === requestedRevisionId)
+          : null;
+        const resolveSessionTitle = options.resolveSessionTitle || resolveCodexSessionTitle;
+        const sessionTitle = requestedRevision?.sessionId
+          ? await resolveSessionTitle(requestedRevision.sessionId)
+          : null;
         await restoreHistoryCacheArtifacts({ cacheRoot: root });
         await Promise.all(history.revisions.map((revision) => restoreHistoryRenderedHtml(revision, {
           documentId,
@@ -67,7 +79,10 @@ export async function startServer(options = {}) {
         })));
         const body = `${JSON.stringify({
           documentId,
-          revisions: history.revisions.map(projectHistoryRevision),
+          revisions: history.revisions.map((revision) => projectHistoryRevision(revision, {
+            includeSessionTitle: requestedRevisionId !== null && revision.id === requestedRevisionId,
+            sessionTitle,
+          })),
         })}\n`;
         return respond(response, 200, request.method === "HEAD" ? "" : body, {
           "content-type": "application/json; charset=utf-8",
@@ -368,8 +383,8 @@ function projectCatalogEntry(entry) {
   };
 }
 
-function projectHistoryRevision(revision) {
-  return {
+function projectHistoryRevision(revision, options = {}) {
+  const projected = {
     id: revision.id,
     href: revision.href,
     renderedAt: revision.renderedAt,
@@ -377,6 +392,8 @@ function projectHistoryRevision(revision) {
     sessionId: revision.sessionId,
     turnId: revision.turnId,
   };
+  if (options.includeSessionTitle) projected.sessionTitle = options.sessionTitle ?? null;
+  return projected;
 }
 
 export async function ensureServer(options = {}) {

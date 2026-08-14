@@ -6,6 +6,7 @@ const RUNTIME_SOURCES = [
   "./assets.mjs",
   "./catalog.mjs",
   "./cli.mjs",
+  "./codex-context.mjs",
   "./document.mjs",
   "./history.mjs",
   "./paths.mjs",

@@ -45,8 +45,8 @@ test("loopback server serves cache files and limits file opening to trusted requ
     href: "/documents/page.html",
     renderedAt: "2026-08-13T10:00:00.000Z",
     source: "manual",
-    sessionId: null,
-    turnId: null,
+    sessionId: "session-page",
+    turnId: "turn-page",
     beforeContentHash: null,
     contentHash: "a".repeat(64),
   });
@@ -54,8 +54,8 @@ test("loopback server serves cache files and limits file opening to trusted requ
     documentId: registered.id,
     renderedAt: "2026-08-13T10:00:00.000Z",
     contentHash: "a".repeat(64),
-    sessionId: null,
-    turnId: null,
+    sessionId: "session-page",
+    turnId: "turn-page",
   });
   await storeHistoryRenderedHtml(registered.id, revisionId, "<!doctype html><title>restored</title>");
   const corruptSnapshot = path.join(process.env.MDVIEW_RUNTIME_DIR, "history", "objects", `${"a".repeat(64)}.md`);
@@ -66,7 +66,10 @@ test("loopback server serves cache files and limits file opening to trusted requ
   await writeFile(durableAsset, "window.mdviewRestored = true;\n");
   await storeHistoryCacheArtifacts([durableAsset], { cacheRoot: cache });
   const { startServer } = await import(`../src/server.mjs?test=${Date.now()}`);
-  const server = await startServer({ port: 0 });
+  const server = await startServer({
+    port: 0,
+    resolveSessionTitle: async (sessionId) => sessionId === "session-page" ? "Current session name" : null,
+  });
   context.after(() => new Promise((resolve) => server.close(resolve)));
   try {
     const port = server.address().port;
@@ -128,10 +131,17 @@ test("loopback server serves cache files and limits file opening to trusted requ
         href: "/documents/page.html",
         renderedAt: "2026-08-13T10:00:00.000Z",
         source: "manual",
-        sessionId: null,
-        turnId: null,
+        sessionId: "session-page",
+        turnId: "turn-page",
       }],
     });
+
+    const titledHistory = await fetch(`http://127.0.0.1:${port}/__mdview/history/${registered.id}?revision=${revisionId}`);
+    assert.equal(titledHistory.status, 200);
+    assert.equal((await titledHistory.json()).revisions[0].sessionTitle, "Current session name");
+
+    const invalidRevisionQuery = await fetch(`http://127.0.0.1:${port}/__mdview/history/${registered.id}?revision=invalid`);
+    assert.equal(invalidRevisionQuery.status, 400);
 
     await unlink(path.join(cache, "documents", "page.html"));
     await unlink(durableAsset);

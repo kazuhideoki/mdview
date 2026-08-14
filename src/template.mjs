@@ -4,6 +4,8 @@ import icons from "@iconify-json/solar/icons.json" with { type: "json" };
 const ICON_NAMES = [
   "folder-open-linear",
   "branching-paths-down-linear",
+  "code-square-linear",
+  "chat-round-dots-linear",
   "document-text-linear",
   "book-bookmark-linear",
   "settings-linear",
@@ -45,14 +47,15 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
 </head>
 <body>
   <svg class="mdv-icon-sprite" aria-hidden="true">${iconSprite()}</svg>
-  <div class="mdv-app" data-view="read" data-document-id="${escape(meta.documentId ?? "")}" data-revision-id="${escape(meta.revisionId ?? "")}" data-current-source="${escape(meta.sourcePath ?? meta.absolutePath ?? "")}" data-current-repo="${escape(meta.repo ?? "")}" data-current-branch="${escape(meta.branch ?? "")}" data-current-relative-path="${escape(meta.relativePath ?? "")}">
+  <div class="mdv-app" data-view="read" data-document-id="${escape(meta.documentId ?? "")}" data-revision-id="${escape(meta.revisionId ?? "")}" data-current-source="${escape(meta.sourcePath ?? meta.absolutePath ?? "")}" data-current-repo="${escape(meta.repo ?? "")}" data-current-worktree="${escape(meta.worktree ?? "")}" data-current-branch="${escape(meta.branch ?? "")}" data-current-relative-path="${escape(meta.relativePath ?? "")}">
     <header class="mdv-topbar">
       <div class="mdv-context" title="${escape(meta.absolutePath ?? "")}">
-        <span>${icon("folder-open-linear")}${escape(meta.repo)}</span><b>/</b>
-        <span>${icon("branching-paths-down-linear")}${escape(meta.branch)}</span><b>/</b>
-        <span>${icon("document-text-linear")}${escape(meta.relativePath)}</span>
-        <i class="mdv-status-dot"></i>
-        <span class="mdv-updated">${escape(meta.updatedLabel ?? "Rendered just now")}</span>
+        <div class="mdv-source-context">
+          <span>${icon("folder-open-linear")}${escape(meta.repo)}</span><b>/</b>
+          <span>${icon("code-square-linear")}${escape(meta.worktree ?? meta.repo)}</span><b>/</b>
+          <span>${icon("branching-paths-down-linear")}${escape(meta.branchDisplay ?? meta.branch)}</span><b>/</b>
+          <span>${icon("document-text-linear")}${escape(meta.relativePath)}</span>
+        </div>
       </div>
       <nav class="mdv-view-switch" aria-label="表示モード">
         <button type="button" data-view-target="read" aria-pressed="true" aria-keyshortcuts="R 1" title="Read (R / 1)">Read</button>
@@ -83,7 +86,10 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
     <footer class="mdv-reviewbar">
       <div class="mdv-history-nav" aria-label="同じファイルの変更履歴">
         <button type="button" data-action="previous-revision" disabled>${icon("arrow-left-linear")}<kbd>P</kbd><span>前の版</span></button>
-        <span class="mdv-history-cursor" data-history-status aria-live="polite">履歴を読み込み中…</span>
+        <div class="mdv-history-context">
+          ${meta.sessionTitle ? `<span class="mdv-session-title" title="Codexセッションの現在名: ${escape(meta.sessionTitle)}">${icon("chat-round-dots-linear")}${escape(meta.sessionTitle)}</span>` : ""}
+          <span class="mdv-history-cursor" data-history-status aria-live="polite">履歴を読み込み中…</span>
+        </div>
         <button type="button" data-action="next-revision" disabled><span>次の版</span><kbd>N</kbd>${icon("arrow-right-linear")}</button>
       </div>
       <button class="mdv-mark-read" type="button" data-action="mark-read">${icon("check-read-linear")}既読にする</button>

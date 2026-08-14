@@ -41,6 +41,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     const result = await renderMarkdownFile(markdownPath, {
       historyRoot,
       changedLines: [1, 5],
+      resolveSessionTitle: async (sessionId) => sessionId === "session-render" ? "Markdown reader context" : null,
       catalogContext: {
         renderedAt: "2026-08-13T10:00:00.000Z",
         source: "codex-hook",
@@ -60,6 +61,11 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.match(html, /href="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]css"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]js"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/mermaid[.]min[.][a-f0-9]{64}[.]js"/);
+    assert.match(html, /class="mdv-session-title"[^>]*>.*Markdown reader context<\/span>/);
+    const topbarHtml = html.slice(html.indexOf('<header class="mdv-topbar">'), html.indexOf("</header>"));
+    assert.doesNotMatch(topbarHtml, /Markdown reader context|mdv-session-title/);
+    assert.ok(html.indexOf("Markdown reader context") > html.indexOf('class="mdv-reviewbar"'));
+    assert.match(html, /data-current-worktree="[^"]+"/);
     assert.ok(result.outputPath.startsWith(cache));
     const copied = await readdir(path.join(path.dirname(result.outputPath), "_assets"));
     assert.equal(copied.length, 1);
@@ -83,8 +89,13 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     await unlink(copiedAsset);
     await unlink(path.join(docs, "pixel.png"));
     await unlink(markdownPath);
-    const rerendered = await renderHistoryRevision(result.catalogEntry.id, result.historyRevision.id, { historyRoot });
+    const rerendered = await renderHistoryRevision(result.catalogEntry.id, result.historyRevision.id, {
+      historyRoot,
+      resolveSessionTitle: async () => "Renamed Codex session",
+    });
     assert.match(rerendered.html, new RegExp(`src="[.]\/_assets\/${copied[0]}"`));
+    assert.match(rerendered.html, /Renamed Codex session/);
+    assert.doesNotMatch(rerendered.html, /Markdown reader context/);
     assert.deepEqual(await readFile(copiedAsset), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
@@ -120,6 +131,7 @@ test("rewrites only relative Markdown links through the mdview follow route", as
       catalogContext: { source: "manual" },
     });
     const html = await readFile(result.outputPath, "utf8");
+    assert.doesNotMatch(html, /mdv-session-title/);
     const sourceId = catalogEntryId(markdownPath);
     assert.match(html, new RegExp(`href="/__mdview/follow/${sourceId}[?]target=[.]%2Fguide[.]md&amp;fragment=usage"`));
     assert.match(html, /href="#links"/);

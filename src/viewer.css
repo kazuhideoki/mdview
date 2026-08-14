@@ -52,11 +52,10 @@
 @layer shell {
   .mdv-app { min-height: 100vh; display: grid; grid-template: var(--mdv-topbar) minmax(0, 1fr) var(--mdv-reviewbar) / var(--mdv-sidebar) minmax(0, 1fr); background: var(--mdv-bg); }
   .mdv-topbar { grid-column: 1 / -1; position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: minmax(280px, 1fr) auto auto; align-items: center; gap: 22px; padding: 0 22px 0 16px; border-bottom: 1px solid var(--mdv-border); background: rgba(18,19,18,.96); backdrop-filter: blur(18px); }
-  .mdv-context { min-width: 0; display: flex; align-items: center; gap: 11px; color: #cbcdc8; font-size: 14px; white-space: nowrap; overflow: hidden; }
-  .mdv-context span { min-width: 0; display: inline-flex; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; }
+  .mdv-context { min-width: 0; color: #cbcdc8; font-size: 14px; white-space: nowrap; overflow: hidden; }
+  .mdv-source-context { min-width: 0; display: flex; align-items: center; gap: 9px; overflow: hidden; }
+  .mdv-context span { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
   .mdv-context b { color: var(--mdv-faint); font-weight: 400; }
-  .mdv-context .mdv-updated { color: var(--mdv-muted); margin-left: 5px; }
-  .mdv-status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--mdv-success); box-shadow: 0 0 0 3px rgba(114,184,121,.08); }
   .mdv-view-switch { height: 40px; display: flex; align-items: stretch; border: 1px solid var(--mdv-border); border-radius: 4px; overflow: hidden; }
   .mdv-view-switch button { position: relative; min-width: 108px; padding: 0 20px; color: #b8bab5; font-size: 14px; border-right: 1px solid var(--mdv-border-soft); }
   .mdv-view-switch button:last-child { border-right: 0; }
@@ -86,7 +85,10 @@
   .mdv-history-nav button { display: inline-flex; align-items: center; gap: 8px; color: #d4d5d1; padding: 10px; }
   .mdv-history-nav button:not(:disabled):hover { color: var(--mdv-fg); }
   .mdv-history-nav kbd { min-width: 23px; display: inline-flex; align-items: center; justify-content: center; padding: 3px 5px; border: 1px solid #3b3d39; border-radius: 3px; background: #20211f; color: #aeb0ab; box-shadow: 0 1px 0 rgba(0,0,0,.35); font: 11px/1 var(--mdv-font-mono); }
-  .mdv-history-cursor { min-width: 180px; color: var(--mdv-faint); text-align: center; white-space: nowrap; }
+  .mdv-history-context { min-width: 180px; max-width: min(46vw, 640px); display: flex; flex-direction: column; align-items: center; gap: 5px; overflow: hidden; }
+  .mdv-session-title { max-width: 100%; display: inline-flex; align-items: center; gap: 7px; overflow: hidden; color: #c8cac5; font-size: 13px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
+  .mdv-session-title .mdv-icon { width: 15px; height: 15px; flex: 0 0 auto; color: var(--mdv-muted); }
+  .mdv-history-cursor { color: var(--mdv-faint); text-align: center; white-space: nowrap; }
   .mdv-history-cursor strong { color: #c2c4bf; font-weight: 650; }
   .mdv-history-cursor time { color: var(--mdv-muted); }
   .mdv-mark-read { height: 48px; min-width: 228px; display: inline-flex; align-items: center; justify-content: center; gap: 12px; padding: 0 25px; color: #dcded9; border: 1px solid #434541; border-radius: 4px; background: rgba(255,255,255,.065); }
@@ -224,7 +226,6 @@
 @layer responsive {
   @media (max-width: 1000px) {
     :root { --mdv-sidebar: 238px; }
-    .mdv-context .mdv-updated, .mdv-context .mdv-status-dot { display: none; }
     .mdv-view-switch button { min-width: 76px; padding-inline: 11px; }
     .mdv-document { width: calc(100vw - var(--mdv-sidebar)); padding: 52px 24px 100px 54px; }
   }
@@ -251,7 +252,10 @@
     .mdv-history-nav button { gap: 4px; padding-inline: 6px; font-size: 12px; }
     .mdv-history-nav button > span { display: none; }
     .mdv-history-nav .mdv-icon { display: none; }
-    .mdv-history-cursor { min-width: 70px; font-size: 11px; }
+    .mdv-history-context { min-width: 70px; max-width: 112px; gap: 3px; }
+    .mdv-session-title { font-size: 11px; }
+    .mdv-session-title .mdv-icon { display: none; }
+    .mdv-history-cursor { font-size: 11px; }
     .mdv-history-detail { display: none; }
     .mdv-mark-read { min-width: auto; height: 42px; padding-inline: 14px; font-size: 12px; }
     .mdv-search-overlay { padding: 8px; }
