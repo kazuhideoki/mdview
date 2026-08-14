@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { historyRevisionId, registerHistoryRevision, storeHistoryCacheArtifacts, storeHistoryRenderedHtml } from "../src/history.mjs";
 
-test("loopback server serves only cache files and rejects writes", async (context) => {
+test("loopback server serves cache files and limits file opening to trusted requests", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const cache = path.join(root, "cache");
@@ -68,7 +69,7 @@ test("loopback server serves only cache files and rejects writes", async (contex
     const port = server.address().port;
     const health = await fetch(`http://127.0.0.1:${port}/__mdview_health`);
     assert.equal(health.status, 200);
-    assert.equal(await health.text(), "mdview/5\n");
+    assert.equal(await health.text(), "mdview/6\n");
 
     const page = await fetch(`http://127.0.0.1:${port}/documents/page.html`);
     assert.equal(page.status, 200);
@@ -147,6 +148,46 @@ test("loopback server serves only cache files and rejects writes", async (contex
     assert.equal(catalogHead.status, 200);
     assert.equal(catalogHead.headers.get("cache-control"), "no-store");
     assert.equal(await catalogHead.text(), "");
+
+    const openedPath = path.join(root, "repo", "opened from palette.md");
+    await writeFile(openedPath, "# Opened from palette\n");
+    const opened = await fetch(`http://127.0.0.1:${port}/__mdview/open`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` },
+      body: JSON.stringify({ path: openedPath }),
+    });
+    assert.equal(opened.status, 200);
+    assert.match((await opened.json()).href, /^\/documents\/.+[.]html$/);
+    const openedCatalog = await fetch(`http://127.0.0.1:${port}/__mdview/catalog`).then((response) => response.json());
+    assert.equal(openedCatalog[0].title, "Opened from palette");
+    assert.equal(openedCatalog[0].source, "manual");
+
+    for (const [label, requestPath, status] of [
+      ["missing", path.join(root, "repo", "missing.md"), 404],
+      ["relative", "relative.md", 400],
+      ["not Markdown", path.join(root, "secret.txt"), 400],
+    ]) {
+      const rejected = await fetch(`http://127.0.0.1:${port}/__mdview/open`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: requestPath }),
+      });
+      assert.equal(rejected.status, status, label);
+    }
+    const crossOriginOpen = await fetch(`http://127.0.0.1:${port}/__mdview/open`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://example.com", "sec-fetch-site": "cross-site" },
+      body: JSON.stringify({ path: openedPath }),
+    });
+    assert.equal(crossOriginOpen.status, 403);
+    const reboundOriginStatus = await rawRequestStatus(port, {
+      host: `attacker.example:${port}`,
+      "content-type": "application/json",
+      origin: `http://attacker.example:${port}`,
+      "sec-fetch-site": "same-origin",
+    }, JSON.stringify({ path: openedPath }));
+    assert.equal(reboundOriginStatus, 421);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/__mdview/open`)).status, 405);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -154,6 +195,17 @@ test("loopback server serves only cache files and rejects writes", async (contex
     else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
   }
 });
+
+function rawRequestStatus(port, headers, body) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({ hostname: "127.0.0.1", port, path: "/__mdview/open", method: "POST", headers }, (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode));
+    });
+    request.once("error", reject);
+    request.end(body);
+  });
+}
 
 test("catalog endpoint exposes every document in the same newest-first order as mdview list", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-catalog-"));
