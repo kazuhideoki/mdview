@@ -43,7 +43,9 @@ mdview hook uninstall
 
 Reader では `P` で同じファイルの古い版へ戻り、`N` で新しい版へ進みます。各版の `Changes` と `Raw diff` は、そのターンの編集開始時点との差分です。`R` / `C` / `D` で `Read` / `Changes` / `Raw diff` を直接切り替えられます。表示モードのボタンにフォーカスがある場合は `←` / `→` でも移動できます。入力欄や検索パレットの操作中は、これらの単キーショートカットは反応しません。`Cmd+K` または `/` で検索パレットを開き、`mdview list` に表示される全文書をタイトル・リポジトリ・ブランチ・パスから検索できます。絶対パスまたは `~/` から始まる `.md` / `.markdown` のパスを入力して Enter を押すと、未描画のファイルもその場で読み込めます。本文中の相対的な `.md` / `.markdown` リンクを開くと、同じリポジトリ内のリンク先を mdview で描画して移動します。
 
-描画キャッシュは `~/Library/Caches/mdview/v1`、履歴の正本は `~/Library/Application Support/mdview/history`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。Reader のJS、CSS、Mermaidは内容ハッシュ付きのアセットとして保存し、各HTMLが生成時のバージョンを固定参照します。配信サーバーは `127.0.0.1:4320` のみで待ち受け、履歴APIはナビゲーション用メタデータだけを返します。Markdown スナップショット自体は配信しません。health 応答には互換性確認用のプロトコル版を含めます。
+描画キャッシュは `~/Library/Caches/mdview/v1`、履歴の正本は `~/Library/Application Support/mdview/history`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。文書を開くと、履歴に保存した Markdown スナップショット、差分、参照したローカル画像を現在の renderer・HTML template・内容ハッシュ付きJS/CSSで再描画します。このため、過去リビジョンの内容は固定したまま、Reader の機能とMarkdownの表示仕様には現在起動しているmdviewが反映されます。生成済みHTMLは互換用のfallbackを兼ねた削除可能なキャッシュであり、正本ではありません。
+
+配信サーバーは `127.0.0.1:4320` のみで待ち受け、履歴APIはナビゲーション用メタデータだけを返します。Markdown スナップショット自体は配信しません。health 応答にはプロトコル版とruntime sourceから計算したbuild IDを含め、`mdview`起動時に現在のCLIと一致しないdaemonだけを安全に再起動します。
 
 ## Hook の境界
 

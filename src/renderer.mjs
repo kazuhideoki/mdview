@@ -12,8 +12,12 @@ import {
   historySnapshotPath,
   markdownContentHash,
   readDocumentHistory,
+  readHistoryRawDiff,
+  readHistorySnapshot,
   registerHistoryRevision,
+  restoreHistoryCacheArtifact,
   storeHistoryCacheArtifacts,
+  storeHistoryRawDiff,
   storeHistoryRenderedHtml,
   storeHistorySnapshot,
 } from "./history.mjs";
@@ -49,6 +53,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     ? options.beforeContentHash
     : latestRevision?.contentHash ?? null;
   const beforePath = beforeContentHash ? historySnapshotPath(beforeContentHash, historyOptions) : null;
+  const beforeRevision = [...history.revisions].reverse().find((candidate) => candidate.contentHash === beforeContentHash);
   let revisionDiff = options.rawDiff;
   let changedLines = options.changedLines;
   if (revisionDiff === undefined && (hasTurnBaseline || latestRevision)) {
@@ -71,57 +76,21 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   meta.revisionId = revisionId;
   const documentPath = documentOutputPath(meta);
   const outputDir = path.dirname(documentPath);
-  const tree = parseMarkdown(markdown);
-  rewriteLocalMarkdownLinks(tree, absolutePath);
-  const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
-  const lineChanges = lineChangesFromPatch(rawDiff);
-  let beforeTree = null;
-  if (beforePath && (lineChanges.removedLines.length > 0 || lineChanges.addedLines.length > 0)) {
-    beforeTree = parseMarkdown(await readFile(beforePath, "utf8"));
-    rewriteLocalMarkdownLinks(beforeTree, absolutePath);
-  }
-  const preparedTrees = beforeTree ? [tree, beforeTree] : [tree];
-  await Promise.all(preparedTrees.flatMap((candidate) => [
-    prepareLocalImages(candidate, absolutePath, meta, outputDir),
-    prepareD2Diagrams(candidate, outputDir),
-  ]));
-  const addedDiffLines = structuralDiffLines(tree, lineChanges.addedLines, lineChanges.hunks, "new");
-  const removedDiffLines = beforeTree
-    ? structuralDiffLines(beforeTree, lineChanges.removedLines, lineChanges.hunks, "old")
-    : [];
-  if (beforeTree) mergeTableRowDiffs(tree, beforeTree, addedDiffLines, removedDiffLines);
-  const rendered = await renderDocument(tree, {
+  const { html, rawDiff, rendered, title, assets } = await renderMarkdownPage({
+    markdown,
+    beforePath,
+    revisionDiff,
     changedLines,
-    diffLines: addedDiffLines,
-    diffKind: "added",
-  });
-  if (beforeTree) {
-    const beforeRendered = await renderDocument(beforeTree, {
-      changedLines: lineChanges.removedLines,
-      diffLines: removedDiffLines,
-      diffKind: "removed",
-      idPrefix: "removed-",
-    });
-    rendered.html = interleaveRevisionBlocks(rendered.blocks, beforeRendered.blocks, lineChanges.hunks);
-  }
-  meta.changeCount = rendered.changeCount;
-  meta.updatedLabel = options.updatedLabel || "Updated by Codex · just now";
-  const assets = await ensureAssets();
-  await mkdir(outputDir, { recursive: true });
-
-  const title = rendered.headings[0]?.text || path.basename(absolutePath);
-  const html = pageTemplate({
-    title,
-    contentHtml: rendered.html,
-    headings: rendered.headings,
+    absolutePath,
     meta,
-    rawDiff,
-    assets: Object.fromEntries(
-      Object.entries(assets).map(([name, filePath]) => [name, relativeWebPath(outputDir, filePath)]),
-    ),
+    outputDir,
+    historyOptions,
+    beforeLocalAssets: beforeRevision?.meta?.localAssets,
+    updatedLabel: options.updatedLabel || "Updated by Codex · just now",
   });
   const outputPath = documentPath.replace(/[.]html$/i, `.${revisionId}.html`);
   await storeHistoryRenderedHtml(documentId, revisionId, html, historyOptions);
+  await storeHistoryRawDiff(documentId, revisionId, rawDiff, historyOptions);
   const artifactPaths = [...Object.values(assets)];
   for (const directory of [path.join(outputDir, "_assets"), path.join(outputDir, "_diagrams")]) {
     if (await directoryExists(directory)) artifactPaths.push(directory);
@@ -152,6 +121,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
       turnId: catalogContext.turnId ?? null,
       beforeContentHash,
       contentHash,
+      meta,
     }, historyOptions);
     let catalogEntry;
     const currentIsNewer = current
@@ -185,6 +155,125 @@ export async function renderMarkdownFile(inputPath, options = {}) {
     meta,
     ...rendered,
   };
+}
+
+export async function renderHistoryRevision(documentId, revisionId, options = {}) {
+  const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
+  const history = await readDocumentHistory(documentId, historyOptions);
+  const revision = history.revisions.find((candidate) => candidate.id === revisionId);
+  if (!revision || !history.sourcePath) return null;
+  const absolutePath = history.sourcePath;
+  const markdown = await readHistorySnapshot(revision.contentHash, historyOptions);
+  const detectedMeta = await documentMeta(absolutePath, { includeChanges: false });
+  const meta = {
+    ...detectedMeta,
+    ...(revision.meta || {}),
+    documentId,
+    revisionId,
+  };
+  const outputPath = outputPathForDocumentHref(revision.href);
+  const outputDir = path.dirname(outputPath);
+  const beforePath = revision.beforeContentHash
+    ? historySnapshotPath(revision.beforeContentHash, historyOptions)
+    : null;
+  const revisionIndex = history.revisions.findIndex((candidate) => candidate.id === revisionId);
+  const beforeRevision = history.revisions
+    .slice(0, revisionIndex)
+    .reverse()
+    .find((candidate) => candidate.contentHash === revision.beforeContentHash);
+  let revisionDiff = await readHistoryRawDiff(documentId, revisionId, historyOptions);
+  if (revisionDiff === null && beforePath) {
+    revisionDiff = await rawDiffBetweenFiles(
+      beforePath,
+      historySnapshotPath(revision.contentHash, historyOptions),
+      meta.relativePath,
+    );
+  }
+  revisionDiff ??= "";
+  const result = await renderMarkdownPage({
+    markdown,
+    beforePath,
+    revisionDiff,
+    changedLines: changedLinesFromPatch(revisionDiff),
+    absolutePath,
+    meta,
+    outputDir,
+    historyOptions,
+    currentLocalAssets: revision.meta?.localAssets,
+    beforeLocalAssets: beforeRevision?.meta?.localAssets,
+    updatedLabel: `Saved revision · ${revision.renderedAt}`,
+  });
+  return { ...result, outputPath, revision, meta };
+}
+
+async function renderMarkdownPage({
+  markdown,
+  beforePath,
+  revisionDiff,
+  changedLines,
+  absolutePath,
+  meta,
+  outputDir,
+  historyOptions,
+  currentLocalAssets,
+  beforeLocalAssets,
+  updatedLabel,
+}) {
+  const tree = parseMarkdown(markdown);
+  rewriteLocalMarkdownLinks(tree, absolutePath);
+  const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
+  const lineChanges = lineChangesFromPatch(rawDiff);
+  let beforeTree = null;
+  if (beforePath && (lineChanges.removedLines.length > 0 || lineChanges.addedLines.length > 0)) {
+    beforeTree = parseMarkdown(await readFile(beforePath, "utf8"));
+    rewriteLocalMarkdownLinks(beforeTree, absolutePath);
+  }
+  meta.localAssets = await prepareLocalImages(tree, absolutePath, meta, outputDir, {
+    historyOptions,
+    savedAssets: currentLocalAssets,
+  });
+  if (beforeTree) {
+    await prepareLocalImages(beforeTree, absolutePath, meta, outputDir, {
+      historyOptions,
+      savedAssets: beforeLocalAssets,
+    });
+  }
+  await Promise.all((beforeTree ? [tree, beforeTree] : [tree]).map((candidate) => prepareD2Diagrams(candidate, outputDir)));
+  const addedDiffLines = structuralDiffLines(tree, lineChanges.addedLines, lineChanges.hunks, "new");
+  const removedDiffLines = beforeTree
+    ? structuralDiffLines(beforeTree, lineChanges.removedLines, lineChanges.hunks, "old")
+    : [];
+  if (beforeTree) mergeTableRowDiffs(tree, beforeTree, addedDiffLines, removedDiffLines);
+  const rendered = await renderDocument(tree, {
+    changedLines,
+    diffLines: addedDiffLines,
+    diffKind: "added",
+  });
+  if (beforeTree) {
+    const beforeRendered = await renderDocument(beforeTree, {
+      changedLines: lineChanges.removedLines,
+      diffLines: removedDiffLines,
+      diffKind: "removed",
+      idPrefix: "removed-",
+    });
+    rendered.html = interleaveRevisionBlocks(rendered.blocks, beforeRendered.blocks, lineChanges.hunks);
+  }
+  meta.changeCount = rendered.changeCount;
+  meta.updatedLabel = updatedLabel;
+  const assets = await ensureAssets();
+  await mkdir(outputDir, { recursive: true });
+  const title = rendered.headings[0]?.text || path.basename(absolutePath);
+  const html = pageTemplate({
+    title,
+    contentHtml: rendered.html,
+    headings: rendered.headings,
+    meta,
+    rawDiff,
+    assets: Object.fromEntries(
+      Object.entries(assets).map(([name, filePath]) => [name, relativeWebPath(outputDir, filePath)]),
+    ),
+  });
+  return { html, rawDiff, rendered, title, assets };
 }
 
 function structuralDiffLines(tree, changedLines, hunks, side) {
@@ -433,12 +522,19 @@ function localMarkdownTarget(value) {
 }
 
 function outputPathForCatalogEntry(entry) {
-  const url = new URL(entry.href, "http://mdview.local");
+  return outputPathForDocumentHref(entry.href);
+}
+
+function outputPathForDocumentHref(href) {
+  const url = new URL(href, "http://mdview.local");
+  if (url.origin !== "http://mdview.local" || url.search || url.hash || !url.pathname.startsWith("/documents/")) {
+    throw new Error("Document href is outside the mdview document cache.");
+  }
   const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
   const candidate = path.resolve(path.dirname(catalogRoot()), ...segments);
   const documents = path.join(path.dirname(catalogRoot()), "documents");
   if (candidate === documents || !candidate.startsWith(`${documents}${path.sep}`)) {
-    throw new Error("Catalog entry points outside the mdview document cache.");
+    throw new Error("Document href is outside the mdview document cache.");
   }
   return candidate;
 }
@@ -496,11 +592,28 @@ async function atomicWrite(target, contents) {
   }
 }
 
-async function prepareLocalImages(tree, markdownPath, meta, outputDir) {
+async function prepareLocalImages(tree, markdownPath, meta, outputDir, options = {}) {
   const nodes = [];
+  const resolvedAssets = {};
   visit(tree, "image", (node) => nodes.push(node));
   for (const node of nodes) {
     if (!node.url || /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(node.url)) continue;
+    const originalUrl = node.url;
+    const savedUrl = options.savedAssets?.[originalUrl];
+    if (/^[.]\/_assets\/[a-f0-9]{20}[.][a-z0-9]+$/i.test(savedUrl || "")) {
+      const savedTarget = path.resolve(outputDir, savedUrl);
+      try {
+        await restoreHistoryCacheArtifact(savedTarget, {
+          ...(options.historyOptions || {}),
+          cacheRoot: cacheRoot(),
+        });
+        node.url = savedUrl;
+        resolvedAssets[originalUrl] = savedUrl;
+        continue;
+      } catch (error) {
+        if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
+      }
+    }
     const sourcePath = path.resolve(path.dirname(markdownPath), decodeURIComponent(node.url));
     let canonical;
     try {
@@ -518,7 +631,9 @@ async function prepareLocalImages(tree, markdownPath, meta, outputDir) {
     await mkdir(assetDir, { recursive: true });
     await copyFile(canonical, target);
     node.url = `./_assets/${name}`;
+    resolvedAssets[originalUrl] = node.url;
   }
+  return resolvedAssets;
 }
 
 async function prepareD2Diagrams(tree, outputDir) {

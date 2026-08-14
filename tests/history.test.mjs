@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  findHistoryRevisionByHref,
   markdownContentHash,
   readDocumentHistory,
+  readHistoryRawDiff,
+  readHistorySnapshot,
   registerHistoryRevision,
+  storeHistoryRawDiff,
   storeHistorySnapshot,
 } from "../src/history.mjs";
 
@@ -23,6 +27,11 @@ test("history stores content-addressed snapshots and chronological revisions wit
   assert.equal(beforeSnapshot.created, true);
   assert.equal(duplicateSnapshot.created, false);
   assert.equal(await readFile(beforeSnapshot.path, "utf8"), before);
+  await writeFile(beforeSnapshot.path, "corrupt snapshot\n");
+  await assert.rejects(readHistorySnapshot(beforeSnapshot.contentHash, { root }), { code: "HISTORY_SNAPSHOT_CORRUPT" });
+  const repairedSnapshot = await storeHistorySnapshot(before, { root });
+  assert.equal(repairedSnapshot.repaired, true);
+  assert.equal(await readHistorySnapshot(beforeSnapshot.contentHash, { root }), before);
 
   const first = await registerHistoryRevision({
     documentId,
@@ -34,7 +43,9 @@ test("history stores content-addressed snapshots and chronological revisions wit
     turnId: "turn-a",
     beforeContentHash: beforeSnapshot.contentHash,
     contentHash: afterSnapshot.contentHash,
+    meta: { repo: "docs", branch: "main", relativePath: "guide.md", repoRoot: root },
   }, { root });
+  await storeHistoryRawDiff(documentId, first.revision.id, "-# Before\n+# After", { root });
   const duplicate = await registerHistoryRevision({
     documentId,
     sourcePath,
@@ -67,4 +78,14 @@ test("history stores content-addressed snapshots and chronological revisions wit
     "/documents/guide.first.html",
     "/documents/guide.reverted.html",
   ]);
+  assert.deepEqual(history.revisions[0].meta, {
+    repo: "docs",
+    branch: "main",
+    relativePath: "guide.md",
+    repoRoot: root,
+    localAssets: null,
+  });
+  assert.equal(await readHistoryRawDiff(documentId, first.revision.id, { root }), "-# Before\n+# After");
+  assert.equal((await findHistoryRevisionByHref("/documents/guide.first.html", { root }))?.revision.id, first.revision.id);
+  assert.equal(await findHistoryRevisionByHref("/documents/missing.html", { root }), null);
 });
