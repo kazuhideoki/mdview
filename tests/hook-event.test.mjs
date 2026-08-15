@@ -19,6 +19,8 @@ import {
   processHookEvent,
   scanMarkdownFiles,
 } from "../src/hook-event.mjs";
+import { readHistorySnapshot } from "../src/history.mjs";
+import { readWorkspaceHistoryForRoot } from "../src/workspace-history.mjs";
 
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mdview-hook-event-"));
@@ -73,6 +75,14 @@ test("UserPromptSubmit preserves its first baseline; Stop detects and advances i
   assert.deepEqual(stop.deletedFiles, [path.join(docs, "old.markdown")]);
   assert.equal(callbacks.length, 1);
   assert.equal(callbacks[0].event.hook_event_name, "Stop");
+  const workspaceHistory = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
+  assert.equal(workspaceHistory.revisions.length, 1);
+  assert.equal(workspaceHistory.revisions[0].sessionId, "session-a");
+  assert.deepEqual(workspaceHistory.revisions[0].changes.map(({ path: file, kind }) => [file, kind]), [
+    ["docs/new.md", "added"],
+    ["docs/old.markdown", "deleted"],
+    ["README.md", "modified"],
+  ]);
 
   const repeated = await processHookEvent(payload(cwd, "Stop"), {
     stateDir,
@@ -90,6 +100,53 @@ test("a Stop without a prompt establishes a baseline without reporting every doc
   const result = await processHookEvent(payload(cwd, "Stop"), { stateDir, historyRoot });
   assert.equal(result.action, "baseline-created");
   assert.deepEqual(result.changedFiles, []);
+  const workspaceHistory = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
+  assert.equal(workspaceHistory.revisions.length, 1);
+  assert.equal(await readHistorySnapshot(workspaceHistory.revisions[0].files["README.md"], { root: historyRoot }), "existing\n");
+});
+
+test("an interrupted Stop retries without losing its workspace revision or changes", async (t) => {
+  const { cwd, stateDir, historyRoot } = await fixture(t);
+  const markdownPath = path.join(cwd, "README.md");
+  await writeFile(markdownPath, "before\n");
+  await processHookEvent(payload(cwd, "UserPromptSubmit"), { stateDir, historyRoot });
+  const statePath = hookStatePath(payload(cwd, "Stop"), { stateDir });
+  const baseline = await readFile(statePath, "utf8");
+  await writeFile(markdownPath, "after\n");
+
+  await assert.rejects(processHookEvent(payload(cwd, "Stop"), {
+    stateDir,
+    historyRoot,
+    now: Date.parse("2026-08-15T10:00:00.000Z"),
+    beforeStateAdvance: async () => { throw new Error("interrupted"); },
+  }), /interrupted/);
+  assert.equal(await readFile(statePath, "utf8"), baseline);
+  assert.equal((await readWorkspaceHistoryForRoot(cwd, { root: historyRoot })).revisions.length, 1);
+
+  const retried = await processHookEvent(payload(cwd, "Stop"), {
+    stateDir,
+    historyRoot,
+    now: Date.parse("2026-08-15T11:00:00.000Z"),
+  });
+  assert.deepEqual(retried.changedFiles, [markdownPath]);
+  const workspace = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
+  assert.equal(workspace.revisions.length, 1);
+  assert.deepEqual(workspace.revisions[0].changes.map(({ path: file, kind }) => [file, kind]), [["README.md", "modified"]]);
+});
+
+test("concurrent Stops serialize state advancement and store one turn revision", async (t) => {
+  const { cwd, stateDir, historyRoot } = await fixture(t);
+  const markdownPath = path.join(cwd, "README.md");
+  await writeFile(markdownPath, "before\n");
+  await processHookEvent(payload(cwd, "UserPromptSubmit"), { stateDir, historyRoot });
+  await writeFile(markdownPath, "after\n");
+
+  const results = await Promise.all([
+    processHookEvent(payload(cwd, "Stop"), { stateDir, historyRoot }),
+    processHookEvent(payload(cwd, "Stop"), { stateDir, historyRoot }),
+  ]);
+  assert.deepEqual(results.map((result) => result.changedFiles.length).sort(), [0, 1]);
+  assert.equal((await readWorkspaceHistoryForRoot(cwd, { root: historyRoot })).revisions.length, 1);
 });
 
 test("nullable payload fields and Japanese paths do not affect snapshotting", async (t) => {

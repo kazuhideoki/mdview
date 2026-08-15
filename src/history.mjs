@@ -381,6 +381,8 @@ function normalizeRevisionMeta(meta) {
     worktree: meta.worktree || null,
     relativePath: meta.relativePath,
     repoRoot: meta.repoRoot || null,
+    workspaceId: meta.workspaceId || null,
+    workspaceRevisionId: meta.workspaceRevisionId || null,
     localAssets: normalizeLocalAssets(meta.localAssets),
   };
   try {
@@ -403,6 +405,11 @@ function validateRevisionMeta(meta) {
   }
   if (meta.worktree != null && (typeof meta.worktree !== "string" || !meta.worktree)) {
     throw new TypeError("History revision meta worktree must be a non-empty string or null.");
+  }
+  for (const field of ["workspaceId", "workspaceRevisionId"]) {
+    if (meta[field] != null && !ID_PATTERN.test(meta[field])) {
+      throw new TypeError(`History revision meta ${field} must be a history id or null.`);
+    }
   }
   if (meta.localAssets !== null) validateLocalAssets(meta.localAssets);
 }

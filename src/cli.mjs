@@ -182,12 +182,12 @@ async function hookCommand(args) {
 
 async function runAsHook() {
   await runHookFromStdin({
-    onChangedFiles: async ({ changes }, payload) => launchHookWorker(changes, payload),
+    onChangedFiles: async ({ changes, renderedAt }, payload) => launchHookWorker(changes, payload, renderedAt),
   });
   return 0;
 }
 
-async function launchHookWorker(changes, payload) {
+async function launchHookWorker(changes, payload, renderedAt) {
   const jobsDir = path.join(runtimeRoot(), "jobs");
   const log = logPath();
   await mkdir(jobsDir, { recursive: true });
@@ -198,7 +198,7 @@ async function launchHookWorker(changes, payload) {
     changes,
     sessionId: payload?.session_id,
     turnId: payload?.turn_id,
-    renderedAt: new Date().toISOString(),
+    renderedAt: renderedAt || new Date().toISOString(),
   })}\n`, { mode: 0o600, flag: "wx" });
   const handle = await open(log, "a", 0o600);
   try {
@@ -274,7 +274,7 @@ export async function openUrl(url, options = {}) {
 }
 
 function printHelp() {
-  process.stdout.write(`mdview — Codex-edited Markdown reader\n\nUsage:\n  mdview                     Open the latest rendered document\n  mdview list                List rendered documents, newest first\n  mdview open <number>       Open an entry shown by mdview list\n  mdview open <file.md>      Render and open a Markdown file\n  mdview <file.md>           Shortcut for mdview open <file.md>\n  mdview render <file.md>    Render without opening a browser\n  mdview demo\n  mdview serve\n  mdview hook <install|status|uninstall>\n\nReader shortcuts:\n  P / N                      Open the previous / next revision\n  R / C / D                  Switch to Read / Changes / Raw diff\n  Left / Right               Switch views while a view button is focused\n  Cmd+K or /                 Search documents or open a Markdown path\n`);
+  process.stdout.write(`mdview — Codex-edited Markdown reader\n\nUsage:\n  mdview                     Open the latest rendered document\n  mdview list                List rendered documents, newest first\n  mdview open <number>       Open an entry shown by mdview list\n  mdview open <file.md>      Render and open a Markdown file\n  mdview <file.md>           Shortcut for mdview open <file.md>\n  mdview render <file.md>    Render without opening a browser\n  mdview demo\n  mdview serve\n  mdview hook <install|status|uninstall>\n\nReader shortcuts:\n  P / N                      Open the previous / next worktree revision\n  R / C / D                  Switch to Read / Changes / Raw diff\n  Left / Right               Switch views while a view button is focused\n  Cmd+Shift+K                Select a worktree\n  Cmd+K or /                 Search Markdown in the selected worktree\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

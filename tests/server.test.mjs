@@ -75,7 +75,7 @@ test("loopback server serves cache files and limits file opening to trusted requ
     const port = server.address().port;
     const health = await fetch(`http://127.0.0.1:${port}/__mdview_health`);
     assert.equal(health.status, 200);
-    assert.match(await health.text(), /^mdview\/7 [a-f0-9]{24}\n$/);
+    assert.match(await health.text(), /^mdview\/8 [a-f0-9]{24}\n$/);
 
     const page = await fetch(`http://127.0.0.1:${port}/documents/page.html`);
     assert.equal(page.status, 200);
@@ -183,7 +183,7 @@ test("loopback server serves cache files and limits file opening to trusted requ
     assert.equal(currentAppPage.status, 200);
     assert.equal(currentAppPage.headers.get("cache-control"), "no-store");
     assert.match(currentAppHtml, /<title>Opened from palette · mdview<\/title>/);
-    assert.match(currentAppHtml, /aria-label="文書を検索、またはMarkdownファイルを開く"/);
+    assert.match(currentAppHtml, /aria-label="このワークツリーのMarkdownを検索"/);
     assert.match(currentAppHtml, /viewer[.][a-f0-9]{64}[.]js/);
     assert.doesNotMatch(currentAppHtml, /obsolete viewer|Changed after capture/);
     await unlink(openedOutput);
@@ -298,7 +298,7 @@ test("catalog endpoint exposes every document in the same newest-first order as 
   }
 });
 
-test("following a relative Markdown link renders, registers, and redirects within mdview", async (context) => {
+test("following a relative Markdown link stays in the selected workspace revision", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-follow-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const cache = path.join(root, "cache");
@@ -336,14 +336,13 @@ test("following a relative Markdown link renders, registers, and redirects withi
 
     const followed = await fetch(`${origin}${followHref}`, { redirect: "manual" });
     assert.equal(followed.status, 302);
-    assert.match(followed.headers.get("location"), /^\/documents\/.+[.]html#%E5%88%A9%E7%94%A8%E6%96%B9%E6%B3%95$/);
+    assert.match(followed.headers.get("location"), /^\/__mdview\/workspaces\/[a-f0-9]{24}\/revisions\/[a-f0-9]{24}\/files\/[a-f0-9]{24}#%E5%88%A9%E7%94%A8%E6%96%B9%E6%B3%95$/);
 
     const catalog = await fetch(`${origin}/__mdview/catalog`).then((response) => response.json());
-    assert.equal(catalog.length, 2);
-    const linked = catalog.find((entry) => entry.source === "link");
-    assert.equal(linked?.source, "link");
-    assert.equal(linked?.title, "Guide");
-    assert.equal(linked?.relativePath, "設計 guide.md");
+    assert.equal(catalog.length, 1);
+    const linked = await fetch(`${origin}${followed.headers.get("location")}`);
+    assert.equal(linked.status, 200);
+    assert.match(await linked.text(), /<title>Guide · mdview<\/title>/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -431,6 +430,86 @@ test("follow route preserves encoded filename characters and rejects encoded sep
   }
 });
 
+test("workspace endpoints scope files and history to one worktree revision", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-workspace-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const cache = path.join(root, "cache");
+  const runtime = path.join(root, "runtime");
+  const repo = path.join(root, "repo");
+  await mkdir(repo, { recursive: true });
+  const firstPath = path.join(repo, "first.md");
+  const secondPath = path.join(repo, "second.md");
+  await writeFile(firstPath, "# First\n\n[Second](./second.md)\n");
+  await writeFile(secondPath, "# Second\n\nBefore.\n");
+
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  const previousRuntime = process.env.MDVIEW_RUNTIME_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  process.env.MDVIEW_RUNTIME_DIR = runtime;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?workspace-server=${Date.now()}`);
+    await renderMarkdownFile(firstPath, {
+      meta: { repo: "repo", worktree: "feature/docs", branch: "feature/docs", relativePath: "first.md", repoRoot: repo },
+      catalogContext: { source: "manual", renderedAt: "2026-08-15T10:00:00.000Z" },
+    });
+    await writeFile(secondPath, "# Second\n\nAfter.\n");
+    await renderMarkdownFile(secondPath, {
+      meta: { repo: "repo", worktree: "feature/docs", branch: "feature/docs", relativePath: "second.md", repoRoot: repo },
+      catalogContext: { source: "manual", renderedAt: "2026-08-15T11:00:00.000Z" },
+    });
+    const { readWorkspaceHistoryForRoot, workspaceDocumentId } = await import(`../src/workspace-history.mjs?workspace-server=${Date.now()}`);
+    const workspace = await readWorkspaceHistoryForRoot(repo);
+    const currentRevision = workspace.revisions.at(-1);
+    assert.deepEqual(workspace.revisions[0].changes, []);
+    const secondId = workspaceDocumentId(repo, "second.md");
+    const { startServer } = await import(`../src/server.mjs?workspace-server=${Date.now()}`);
+    const server = await startServer({ port: 0 });
+    context.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+
+    const summaries = await fetch(`${origin}/__mdview/workspaces`).then((response) => response.json());
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].worktree, "feature/docs");
+    const details = await fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`).then((response) => response.json());
+    assert.deepEqual(details.files.map((file) => file.relativePath), ["first.md", "second.md"]);
+    assert.equal(details.revisions.length, 2);
+    assert.ok(details.revisions.every((revision) => revision.href.includes(`/files/${secondId}`)));
+
+    const documentResponse = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}?view=changes`);
+    assert.equal(documentResponse.status, 200);
+    const documentHtml = await documentResponse.text();
+    assert.match(documentHtml, /data-view="changes"/);
+    assert.match(documentHtml, /data-workspace-id="[a-f0-9]{24}"/);
+    assert.match(documentHtml, /aria-label="このワークツリーのMarkdownを検索"/);
+    assert.match(documentHtml, /data-diff-kind="removed"[^>]*>Before[.]<\/p>/);
+    assert.match(documentHtml, /data-diff-kind="added"[^>]*>After[.]<\/p>/);
+
+    await unlink(path.join(runtime, "history", "objects", `${currentRevision.files["second.md"]}.md`));
+    const recoveredSnapshot = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}?view=changes`);
+    assert.equal(recoveredSnapshot.status, 200);
+    assert.match(await recoveredSnapshot.text(), /data-diff-kind="added"[^>]*>After[.]<\/p>/);
+
+    const firstId = workspaceDocumentId(repo, "first.md");
+    const firstHref = details.files.find((file) => file.documentId === firstId).href;
+    const firstHtml = await fetch(`${origin}${firstHref}`).then((response) => response.text());
+    const followedHref = firstHtml.match(/href="([^"]*\/__mdview\/follow\/[^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+    assert.ok(followedHref);
+    const followed = await fetch(new URL(followedHref, origin), { redirect: "manual" });
+    assert.equal(followed.status, 302);
+    assert.equal(followed.headers.get("location"), details.files.find((file) => file.documentId === secondId).href);
+
+    await writeFile(path.join(runtime, "history", "workspaces", `${workspace.workspaceId}.json`), "{broken");
+    const recoveredManifest = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}`);
+    assert.equal(recoveredManifest.status, 200);
+    assert.match(await recoveredManifest.text(), /After[.]/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+    if (previousRuntime === undefined) delete process.env.MDVIEW_RUNTIME_DIR;
+    else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
+  }
+});
+
 test("only a verified mdview daemon command is eligible for protocol upgrade restart", async () => {
   const { isMdviewDaemonCommand, parseMdviewHealth } = await import(`../src/server.mjs?daemon=${Date.now()}`);
   assert.equal(isMdviewDaemonCommand("/opt/homebrew/bin/node /repo/mdview/src/cli.mjs serve --daemon"), true);
@@ -438,7 +517,7 @@ test("only a verified mdview daemon command is eligible for protocol upgrade res
   assert.equal(isMdviewDaemonCommand("python /repo/mdview/src/cli.mjs serve --daemon"), false);
   assert.equal(isMdviewDaemonCommand("node /repo/mdview/src/cli.mjs render README.md"), false);
   assert.equal(isMdviewDaemonCommand("node malicious.mjs serve --daemon"), false);
-  assert.deepEqual(parseMdviewHealth(`mdview/7 ${"a".repeat(24)}\n`), { protocol: 7, buildId: "a".repeat(24) });
+  assert.deepEqual(parseMdviewHealth(`mdview/8 ${"a".repeat(24)}\n`), { protocol: 8, buildId: "a".repeat(24) });
   assert.deepEqual(parseMdviewHealth("mdview/6\n"), { protocol: 6, buildId: null });
   assert.equal(parseMdviewHealth(`mdview/6 ${"a".repeat(24)}\nextra`), null);
 });

@@ -148,7 +148,8 @@ test("help documents history commands and reader search shortcuts", async (t) =>
   assert.match(result.stdout, /mdview open <number>/);
   assert.match(result.stdout, /R \/ C \/ D[ ]+Switch to Read \/ Changes \/ Raw diff/);
   assert.match(result.stdout, /Left \/ Right[ ]+Switch views/);
-  assert.match(result.stdout, /Cmd\+K or \/[ ]+Search documents or open a Markdown path/);
+  assert.match(result.stdout, /Cmd\+Shift\+K[ ]+Select a worktree/);
+  assert.match(result.stdout, /Cmd\+K or \/[ ]+Search Markdown in the selected worktree/);
 });
 
 test("Stop hook passes session and turn identity through the private worker job", async (t) => {
