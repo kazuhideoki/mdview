@@ -35,19 +35,70 @@ export function icon(name, label = "") {
 }
 
 export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDiff = "" }) {
+  const workspaceScoped = Boolean(meta.workspaceId && meta.workspaceRevisionId);
+  const documentSearchTrigger = workspaceScoped
+    ? `<button class="mdv-search-trigger" type="button" data-action="open-search" aria-label="文書を検索" aria-haspopup="dialog" aria-controls="mdv-search-dialog" aria-expanded="false">${icon("minimalistic-magnifier-linear")}<span>検索</span><kbd>⌘K</kbd></button>`
+    : "";
+  const sidebar = workspaceScoped
+    ? `<aside class="mdv-sidebar" aria-label="ワークツリーの文書">
+      <div class="mdv-sidebar-head">
+        <button type="button" data-action="toggle-toc" aria-label="サイドバーを閉じる">${icon("alt-arrow-left-linear")}</button>
+        <label class="mdv-worktree-picker">
+          <span><b>Worktree</b><kbd>⌘⇧K</kbd></span>
+          <select data-workspace-select aria-label="ワークツリーを選択" disabled>
+            <option value="${escape(meta.workspaceId)}">${escape(meta.worktree ?? meta.repo)}</option>
+          </select>
+        </label>
+        <div class="mdv-sidebar-tabs" role="tablist" aria-label="サイドバー表示">
+          <button type="button" role="tab" data-sidebar-target="files" aria-selected="true">Files</button>
+          <button type="button" role="tab" data-sidebar-target="outline" aria-selected="false">Outline</button>
+        </div>
+      </div>
+      <nav class="mdv-workspace-files" data-sidebar-panel="files" aria-label="Markdownファイル">
+        <p class="mdv-sidebar-loading" data-workspace-files-status>ファイルを読み込み中…</p>
+        <div data-workspace-files></div>
+      </nav>
+      <nav class="mdv-toc" data-sidebar-panel="outline" hidden>${renderToc(headings)}</nav>
+      <button class="mdv-sidebar-close" type="button" data-action="toggle-toc">${icon("alt-arrow-left-linear")}サイドバーを閉じる</button>
+    </aside>`
+    : `<aside class="mdv-sidebar" aria-label="目次">
+      <div class="mdv-sidebar-head">
+        <button type="button" data-action="toggle-toc" aria-label="目次を閉じる">${icon("alt-arrow-left-linear")}</button>
+        <span>目次</span>
+      </div>
+      <nav class="mdv-toc">${renderToc(headings)}</nav>
+      <button class="mdv-sidebar-close" type="button" data-action="toggle-toc">${icon("alt-arrow-left-linear")}目次を閉じる</button>
+    </aside>`;
+  const documentSearchOverlay = workspaceScoped
+    ? `<div class="mdv-search-overlay" data-search-overlay hidden>
+      <section class="mdv-search-dialog" id="mdv-search-dialog" role="dialog" aria-modal="true" aria-labelledby="mdv-search-title">
+        <h2 class="mdv-visually-hidden" id="mdv-search-title">このワークツリーの文書を検索</h2>
+        <div class="mdv-search-input-row">
+          ${icon("minimalistic-magnifier-linear")}
+          <input id="mdv-search-input" type="search" role="combobox" aria-label="このワークツリーのMarkdownを検索" aria-autocomplete="list" aria-controls="mdv-search-results" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="このワークツリーのMarkdownを検索">
+          <kbd>Esc</kbd>
+          <button type="button" data-action="close-search" aria-label="検索を閉じる">${icon("close-circle-linear")}</button>
+        </div>
+        <p class="mdv-search-status" id="mdv-search-status" role="status" aria-live="polite">文書を読み込んでいます…</p>
+        <ul class="mdv-search-results" id="mdv-search-results" role="listbox" aria-label="文書の検索結果"></ul>
+        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd> 選択</span><span><kbd>Enter</kbd> 開く</span><span><kbd>Esc</kbd> 閉じる</span></footer>
+      </section>
+    </div>`
+    : "";
   return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri '${meta.documentBaseHref ? "self" : "none"}'; form-action 'none'">
+  ${meta.documentBaseHref ? `<base href="${escape(meta.documentBaseHref)}">` : ""}
   <title>${escape(title)} · mdview</title>
   <link rel="stylesheet" href="${assets.stylesheet}">
 </head>
 <body>
   <svg class="mdv-icon-sprite" aria-hidden="true">${iconSprite()}</svg>
-  <div class="mdv-app" data-view="read" data-document-id="${escape(meta.documentId ?? "")}" data-revision-id="${escape(meta.revisionId ?? "")}" data-current-source="${escape(meta.sourcePath ?? meta.absolutePath ?? "")}" data-current-repo="${escape(meta.repo ?? "")}" data-current-worktree="${escape(meta.worktree ?? "")}" data-current-branch="${escape(meta.branch ?? "")}" data-current-relative-path="${escape(meta.relativePath ?? "")}">
+  <div class="mdv-app" data-view="read" data-document-id="${escape(meta.documentId ?? "")}" data-revision-id="${escape(meta.revisionId ?? "")}" data-workspace-id="${escape(meta.workspaceId ?? "")}" data-workspace-revision-id="${escape(meta.workspaceRevisionId ?? "")}" data-current-source="${escape(meta.sourcePath ?? meta.absolutePath ?? "")}" data-current-repo="${escape(meta.repo ?? "")}" data-current-worktree="${escape(meta.worktree ?? "")}" data-current-branch="${escape(meta.branch ?? "")}" data-current-relative-path="${escape(meta.relativePath ?? "")}">
     <header class="mdv-topbar">
       <div class="mdv-context" title="${escape(meta.absolutePath ?? "")}">
         <div class="mdv-source-context">
@@ -63,20 +114,13 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
         <button type="button" data-view-target="raw" aria-pressed="false" aria-keyshortcuts="D 3" title="Raw diff (D / 3)">Raw diff</button>
       </nav>
       <div class="mdv-top-actions">
-        <button class="mdv-search-trigger" type="button" data-action="open-search" aria-label="文書を検索" aria-haspopup="dialog" aria-controls="mdv-search-dialog" aria-expanded="false">${icon("minimalistic-magnifier-linear")}<span>検索</span><kbd>⌘K</kbd></button>
-        <button type="button" data-action="toggle-toc" aria-label="目次を切り替える">${icon("book-bookmark-linear")}</button>
+        ${documentSearchTrigger}
+        <button type="button" data-action="toggle-toc" aria-label="サイドバーを切り替える">${icon("book-bookmark-linear")}</button>
         <button type="button" data-action="toggle-settings" aria-label="表示設定">${icon("settings-linear")}</button>
       </div>
     </header>
-    <aside class="mdv-sidebar" aria-label="目次">
-      <div class="mdv-sidebar-head">
-        <button type="button" data-action="toggle-toc" aria-label="目次を閉じる">${icon("alt-arrow-left-linear")}</button>
-        <span>目次</span>
-      </div>
-      <nav class="mdv-toc">${renderToc(headings)}</nav>
-      <button class="mdv-sidebar-close" type="button" data-action="toggle-toc">${icon("alt-arrow-left-linear")}目次を閉じる</button>
-    </aside>
-    <button class="mdv-sidebar-scrim" type="button" data-action="toggle-toc" aria-label="目次を閉じる"></button>
+    ${sidebar}
+    <button class="mdv-sidebar-scrim" type="button" data-action="toggle-toc" aria-label="サイドバーを閉じる"></button>
     <main class="mdv-main">
       <article class="mdv-document" data-render-schema="1">
         <div class="mdv-document-body">${contentHtml}</div>
@@ -84,13 +128,13 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
       <section class="mdv-raw-diff" aria-label="Raw diff" hidden><pre><code>${escape(rawDiff || "この文書には未コミットの差分がありません。")}</code></pre></section>
     </main>
     <footer class="mdv-reviewbar">
-      <div class="mdv-history-nav" aria-label="同じファイルの変更履歴">
-        <button type="button" data-action="previous-revision" disabled>${icon("arrow-left-linear")}<kbd>P</kbd><span>前の版</span></button>
+      <div class="mdv-history-nav" aria-label="${workspaceScoped ? "ワークツリーの作業履歴" : "同じファイルの変更履歴"}">
+        <button type="button" data-action="previous-revision" disabled>${icon("arrow-left-linear")}<kbd>P</kbd><span>${workspaceScoped ? "前の作業" : "前の版"}</span></button>
         <div class="mdv-history-context">
           ${meta.sessionTitle ? `<span class="mdv-session-title" title="Codexセッションの現在名: ${escape(meta.sessionTitle)}">${icon("chat-round-dots-linear")}${escape(meta.sessionTitle)}</span>` : ""}
           <span class="mdv-history-cursor" data-history-status aria-live="polite">履歴を読み込み中…</span>
         </div>
-        <button type="button" data-action="next-revision" disabled><span>次の版</span><kbd>N</kbd>${icon("arrow-right-linear")}</button>
+        <button type="button" data-action="next-revision" disabled><span>${workspaceScoped ? "次の作業" : "次の版"}</span><kbd>N</kbd>${icon("arrow-right-linear")}</button>
       </div>
       <button class="mdv-mark-read" type="button" data-action="mark-read">${icon("check-read-linear")}既読にする</button>
     </footer>
@@ -99,17 +143,18 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
       <label>本文幅 <input type="range" min="64" max="88" value="76" data-setting="measure"></label>
       <label>文字サイズ <input type="range" min="15" max="20" value="17" data-setting="font-size"></label>
     </aside>
-    <div class="mdv-search-overlay" data-search-overlay hidden>
-      <section class="mdv-search-dialog" id="mdv-search-dialog" role="dialog" aria-modal="true" aria-labelledby="mdv-search-title">
-        <h2 class="mdv-visually-hidden" id="mdv-search-title">文書を検索</h2>
+    ${documentSearchOverlay}
+    <div class="mdv-search-overlay mdv-workspace-palette-overlay" data-workspace-palette-overlay hidden>
+      <section class="mdv-search-dialog" id="mdv-workspace-palette-dialog" role="dialog" aria-modal="true" aria-labelledby="mdv-workspace-palette-title">
+        <h2 class="mdv-visually-hidden" id="mdv-workspace-palette-title">ワークツリーを選択</h2>
         <div class="mdv-search-input-row">
-          ${icon("minimalistic-magnifier-linear")}
-          <input id="mdv-search-input" type="search" role="combobox" aria-label="文書を検索、またはMarkdownファイルを開く" aria-autocomplete="list" aria-controls="mdv-search-results" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="文書を検索、またはMarkdownファイルの絶対パスを入力">
+          ${icon("code-square-linear")}
+          <input id="mdv-workspace-palette-input" type="search" role="combobox" aria-label="ワークツリーを検索" aria-autocomplete="list" aria-controls="mdv-workspace-palette-results" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="リポジトリ、ワークツリー、ブランチを検索">
           <kbd>Esc</kbd>
-          <button type="button" data-action="close-search" aria-label="検索を閉じる">${icon("close-circle-linear")}</button>
+          <button type="button" data-action="close-workspace-palette" aria-label="ワークツリー選択を閉じる">${icon("close-circle-linear")}</button>
         </div>
-        <p class="mdv-search-status" id="mdv-search-status" role="status" aria-live="polite">文書を読み込んでいます…</p>
-        <ul class="mdv-search-results" id="mdv-search-results" role="listbox" aria-label="文書の検索結果"></ul>
+        <p class="mdv-search-status" id="mdv-workspace-palette-status" role="status" aria-live="polite">ワークツリーを読み込んでいます…</p>
+        <ul class="mdv-search-results" id="mdv-workspace-palette-results" role="listbox" aria-label="ワークツリーの検索結果"></ul>
         <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd> 選択</span><span><kbd>Enter</kbd> 開く</span><span><kbd>Esc</kbd> 閉じる</span></footer>
       </section>
     </div>

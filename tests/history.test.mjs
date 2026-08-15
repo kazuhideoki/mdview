@@ -85,6 +85,8 @@ test("history stores content-addressed snapshots and chronological revisions wit
     worktree: null,
     relativePath: "guide.md",
     repoRoot: root,
+    workspaceId: null,
+    workspaceRevisionId: null,
     localAssets: null,
   });
   assert.equal(await readHistoryRawDiff(documentId, first.revision.id, { root }), "-# Before\n+# After");

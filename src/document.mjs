@@ -20,7 +20,7 @@ async function git(args, cwd) {
 }
 
 export async function rawDiffBetweenFiles(beforePath, afterPath, relativePath) {
-  const args = ["diff", "--no-index", "--no-ext-diff", "--unified=3", "--", beforePath || "/dev/null", afterPath];
+  const args = ["diff", "--no-index", "--no-ext-diff", "--unified=3", "--", beforePath || "/dev/null", afterPath || "/dev/null"];
   let patch = "";
   try {
     const { stdout } = await execFileAsync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -34,7 +34,7 @@ export async function rawDiffBetweenFiles(beforePath, afterPath, relativePath) {
   return patch.split("\n").map((line) => {
     if (line.startsWith("diff --git ")) return `diff --git a/${portable} b/${portable}`;
     if (line.startsWith("--- ")) return beforePath ? `--- a/${portable}` : "--- /dev/null";
-    if (line.startsWith("+++ ")) return `+++ b/${portable}`;
+    if (line.startsWith("+++ ")) return afterPath ? `+++ b/${portable}` : "+++ /dev/null";
     return line;
   }).join("\n").trimEnd();
 }

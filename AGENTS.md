@@ -22,7 +22,11 @@ When implementing from a selected generated mock, treat that image as the source
 
 In the reading view, preserve Markdown's structural markers such as list bullets and present the document as ordinary reading material. Do not show change-state accents, markers, labels, timeline dots, or decorative `H` badges; keep change indicators in Changes view.
 
-In the reading view, navigate revisions of the same file instead of jumping between changed blocks. Use `N` for the next revision and `P` for the previous revision, with a restrained history cursor that helps readers follow Codex editing history.
+Treat the selected worktree as the primary browsing scope. Select or fix the worktree before file search, and limit the sidebar and file search results to Markdown in that worktree; do not mix same-named files from other worktrees into those results.
+
+Use `Cmd+Shift+K` for a dedicated worktree selection palette. Keep `Cmd+K` and `/` scoped to Markdown search inside the selected worktree.
+
+In the reading view, navigate worktree-wide Codex turn revisions instead of jumping between changed blocks. Use `N` for the next worktree revision and `P` for the previous worktree revision, preserve the selected file when it exists at the destination, and use a restrained history cursor that helps readers follow Codex editing history.
 
 In the reading view header, show only stable document-location context: repository, worktree, branch, and Markdown path. Show the current name of the Codex session associated with the displayed revision beside its N/P history controls; it is a session identifier, not a historical label captured when that revision was created. Resolve it by the revision's session ID rather than guessing from the worktree; prefer the latest matching `session_index.jsonl` `thread_name`, then fall back to the Codex state database. Omit it for manual renders. Reflect later Codex title changes when the revision is viewed again, including when saved HTML is used as a rendering fallback. For detached worktrees, show the short commit SHA with the detached state.
 

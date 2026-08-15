@@ -11,8 +11,14 @@ import { readCatalog } from "./catalog.mjs";
 import { findHistoryRevisionByHref, readDocumentHistory, restoreHistoryCacheArtifacts, restoreHistoryRenderedHtml } from "./history.mjs";
 import { documentMeta } from "./document.mjs";
 import { cacheRoot, logPath, runtimeRoot, serverPort } from "./paths.mjs";
-import { renderHistoryRevision, renderMarkdownFile } from "./renderer.mjs";
+import { renderHistoryRevision, renderMarkdownFile, renderWorkspaceRevision } from "./renderer.mjs";
 import { resolveCodexSessionTitle } from "./codex-context.mjs";
+import {
+  readWorkspaceHistories,
+  readWorkspaceHistory,
+  workspaceDocumentId,
+  workspaceFileAtRevision,
+} from "./workspace-history.mjs";
 
 const CONTENT_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -25,7 +31,7 @@ const CONTENT_TYPES = new Map([
   [".gif", "image/gif"],
   [".webp", "image/webp"],
 ]);
-const PROTOCOL_VERSION = 7;
+const PROTOCOL_VERSION = 8;
 const followRenders = new Map();
 const execFileAsync = promisify(execFile);
 
@@ -56,6 +62,62 @@ export async function startServer(options = {}) {
           "cache-control": "no-store",
           "content-length": Buffer.byteLength(body),
         });
+      }
+      if (pathname === "/__mdview/workspaces") {
+        const histories = await readWorkspaceHistories();
+        const body = `${JSON.stringify(histories.map(projectWorkspaceSummary))}\n`;
+        return respond(response, 200, request.method === "HEAD" ? "" : body, {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "content-length": Buffer.byteLength(body),
+        });
+      }
+      if (pathname.startsWith("/__mdview/workspaces/")) {
+        const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+        const workspaceId = segments[2];
+        if (!/^[a-f0-9]{24}$/.test(workspaceId || "")) return respond(response, 404, "Not Found");
+        if (segments.length === 3) {
+          return workspaceDetails(request, response, requestUrl, workspaceId, options);
+        }
+        if (
+          segments.length === 7
+          && segments[3] === "revisions"
+          && segments[5] === "files"
+          && /^[a-f0-9]{24}$/.test(segments[4])
+          && /^[a-f0-9]{24}$/.test(segments[6])
+        ) {
+          let html;
+          try {
+            const rendered = await renderWorkspaceRevision(workspaceId, segments[4], segments[6], {
+              resolveSessionTitle: options.resolveSessionTitle,
+            });
+            if (!rendered) return respond(response, 404, "Not Found");
+            html = rendered.html;
+          } catch (error) {
+            try {
+              html = await readFile(workspaceRenderedHtmlPath(root, workspaceId, segments[4], segments[6]), "utf8");
+            } catch (fallbackError) {
+              if (fallbackError?.code === "ENOENT" || fallbackError?.code === "ENOTDIR") {
+                if (error?.code === "ENOENT" || error?.code === "HISTORY_SNAPSHOT_CORRUPT" || error?.code === "WORKSPACE_MANIFEST_CORRUPT") {
+                  return respond(response, 409, "Workspace revision is unavailable");
+                }
+                throw error;
+              }
+              throw fallbackError;
+            }
+          }
+          const requestedView = requestUrl.searchParams.get("view");
+          const body = isReaderView(requestedView)
+            ? applyInitialView(html, requestedView)
+            : html;
+          return respond(response, 200, request.method === "HEAD" ? "" : body, {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+            "content-length": Buffer.byteLength(body),
+            "x-content-type-options": "nosniff",
+          });
+        }
+        return respond(response, 404, "Not Found");
       }
       if (pathname.startsWith("/__mdview/history/")) {
         const documentId = decodeURIComponent(pathname.slice("/__mdview/history/".length));
@@ -226,6 +288,24 @@ async function followMarkdownLink(requestUrl, response) {
   }
   const target = requestUrl.searchParams.get("target");
   const fragment = requestUrl.searchParams.get("fragment") || "";
+  const workspaceId = requestUrl.searchParams.get("workspace");
+  const workspaceRevisionId = requestUrl.searchParams.get("revision");
+  if (workspaceId !== null || workspaceRevisionId !== null) {
+    if (!/^[a-f0-9]{24}$/.test(workspaceId || "") || !/^[a-f0-9]{24}$/.test(workspaceRevisionId || "") || !target) {
+      return respond(response, 404, "Not Found");
+    }
+    const workspace = await readWorkspaceHistory(workspaceId);
+    const destination = workspaceMarkdownDestination(workspace, workspaceRevisionId, sourceId, target);
+    if (!destination) return respond(response, 404, "Not Found");
+    const location = new URL(destination, "http://mdview.local");
+    if (fragment) location.hash = fragment;
+    response.writeHead(302, {
+      location: `${location.pathname}${location.hash}`,
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    });
+    return response.end();
+  }
   const source = (await readCatalog()).find((entry) => entry.id === sourceId);
   if (!source || !target) return respond(response, 404, "Not Found");
 
@@ -241,6 +321,29 @@ async function followMarkdownLink(requestUrl, response) {
     "x-content-type-options": "nosniff",
   });
   response.end();
+}
+
+function workspaceMarkdownDestination(workspace, revisionId, sourceId, target) {
+  const source = workspaceFileAtRevision(workspace, revisionId, sourceId);
+  if (!source || source.change?.kind === "deleted") return null;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(target);
+  } catch {
+    return null;
+  }
+  if (
+    !decoded
+    || decoded.includes("\0")
+    || decoded.includes("\\")
+    || path.posix.isAbsolute(decoded)
+    || /^[a-z][a-z0-9+.-]*:/i.test(decoded)
+    || !/[.](?:md|markdown)$/i.test(decoded)
+    || /%(?:2f|5c)/i.test(target)
+  ) return null;
+  const relativePath = path.posix.normalize(path.posix.join(path.posix.dirname(source.relativePath), decoded));
+  if (relativePath === ".." || relativePath.startsWith("../") || !(relativePath in source.revision.files)) return null;
+  return workspaceDocumentHref(workspace.workspaceId, revisionId, workspaceDocumentId(workspace.root, relativePath));
 }
 
 function isTrustedFollowRequest(request, requestUrl) {
@@ -394,6 +497,94 @@ function projectHistoryRevision(revision, options = {}) {
   };
   if (options.includeSessionTitle) projected.sessionTitle = options.sessionTitle ?? null;
   return projected;
+}
+
+async function workspaceDetails(request, response, requestUrl, workspaceId, options) {
+  const workspace = await readWorkspaceHistory(workspaceId);
+  if (!workspace.root || workspace.revisions.length === 0) return respond(response, 404, "Not Found");
+  const requestedRevisionId = requestUrl.searchParams.get("revision") || workspace.revisions.at(-1).id;
+  const currentDocumentId = requestUrl.searchParams.get("document");
+  if (!/^[a-f0-9]{24}$/.test(requestedRevisionId)) return respond(response, 400, "Bad Request");
+  if (currentDocumentId !== null && !/^[a-f0-9]{24}$/.test(currentDocumentId)) return respond(response, 400, "Bad Request");
+  const revision = workspace.revisions.find((candidate) => candidate.id === requestedRevisionId);
+  if (!revision) return respond(response, 404, "Not Found");
+  const resolveSessionTitle = options.resolveSessionTitle || resolveCodexSessionTitle;
+  const sessionTitle = revision.sessionId ? await resolveSessionTitle(revision.sessionId) : null;
+  const files = projectWorkspaceFiles(workspace, revision);
+  const revisions = workspace.revisions.map((candidate) => ({
+    id: candidate.id,
+    renderedAt: candidate.renderedAt,
+    source: candidate.source,
+    sessionId: candidate.sessionId,
+    turnId: candidate.turnId,
+    href: workspaceRevisionHref(workspace, candidate, currentDocumentId),
+    ...(candidate.id === revision.id ? { sessionTitle } : {}),
+  }));
+  const body = `${JSON.stringify({
+    workspaceId,
+    revisionId: revision.id,
+    meta: revision.meta,
+    files,
+    revisions,
+  })}\n`;
+  return respond(response, 200, request.method === "HEAD" ? "" : body, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "content-length": Buffer.byteLength(body),
+  });
+}
+
+function projectWorkspaceSummary(workspace) {
+  const revision = workspace.revisions.at(-1);
+  return {
+    id: workspace.workspaceId,
+    repo: revision.meta.repo,
+    worktree: revision.meta.worktree,
+    branch: revision.meta.branch,
+    head: revision.meta.head,
+    revisionId: revision.id,
+    renderedAt: revision.renderedAt,
+    href: workspaceRevisionHref(workspace, revision, null),
+  };
+}
+
+function projectWorkspaceFiles(workspace, revision) {
+  const paths = new Set(Object.keys(revision.files));
+  for (const change of revision.changes) {
+    if (change.kind === "deleted") paths.add(change.path);
+  }
+  return [...paths].sort((left, right) => left.localeCompare(right)).map((relativePath) => {
+    const documentId = workspaceDocumentId(workspace.root, relativePath);
+    const change = revision.changes.find((candidate) => candidate.path === relativePath) || null;
+    return {
+      documentId,
+      title: path.basename(relativePath).replace(/\.(?:md|markdown)$/i, ""),
+      relativePath,
+      changeKind: change?.kind || null,
+      href: workspaceDocumentHref(workspace.workspaceId, revision.id, documentId),
+    };
+  });
+}
+
+function workspaceRevisionHref(workspace, revision, preferredDocumentId) {
+  const preferred = preferredDocumentId
+    ? workspaceFileAtRevision(workspace, revision.id, preferredDocumentId)
+    : null;
+  if (preferred?.contentHash) {
+    return workspaceDocumentHref(workspace.workspaceId, revision.id, preferredDocumentId);
+  }
+  const firstPath = Object.keys(revision.files).sort((left, right) => left.localeCompare(right))[0]
+    || revision.changes.find((change) => change.kind === "deleted")?.path;
+  if (!firstPath) return null;
+  return workspaceDocumentHref(workspace.workspaceId, revision.id, workspaceDocumentId(workspace.root, firstPath));
+}
+
+function workspaceDocumentHref(workspaceId, revisionId, documentId) {
+  return `/__mdview/workspaces/${workspaceId}/revisions/${revisionId}/files/${documentId}`;
+}
+
+function workspaceRenderedHtmlPath(root, workspaceId, revisionId, documentId) {
+  return path.join(root, "documents", "workspaces", workspaceId, revisionId, documentId, "index.html");
 }
 
 export async function ensureServer(options = {}) {

@@ -4,18 +4,39 @@ const headings = [...document.querySelectorAll('.mdv-heading[id]:not([data-diff-
 const tocLinks = [...document.querySelectorAll(".mdv-toc a")];
 const documentId = app?.dataset.documentId || "";
 const revisionId = app?.dataset.revisionId || "";
+const workspaceId = app?.dataset.workspaceId || "";
+const workspaceRevisionId = app?.dataset.workspaceRevisionId || "";
 const storageKey = documentId ? `mdview:document:${documentId}` : `mdview:${location.pathname}`;
 const searchOverlay = document.querySelector("[data-search-overlay]");
 const searchInput = document.querySelector("#mdv-search-input");
 const searchResults = document.querySelector("#mdv-search-results");
 const searchStatus = document.querySelector("#mdv-search-status");
+const workspacePaletteOverlay = document.querySelector("[data-workspace-palette-overlay]");
+const workspacePaletteInput = document.querySelector("#mdv-workspace-palette-input");
+const workspacePaletteResults = document.querySelector("#mdv-workspace-palette-results");
+const workspacePaletteStatus = document.querySelector("#mdv-workspace-palette-status");
+const workspaceFiles = document.querySelector("[data-workspace-files]");
+const workspaceFilesStatus = document.querySelector("[data-workspace-files-status]");
+const workspaceSelect = document.querySelector("[data-workspace-select]");
 const searchState = {
   entries: [],
   matches: [],
   activeIndex: -1,
   controller: null,
   restoreFocus: null,
-  opening: false,
+};
+const workspacePaletteState = {
+  matches: [],
+  activeIndex: -1,
+  restoreFocus: null,
+};
+const workspaceState = {
+  files: [],
+  workspaces: [],
+  payload: null,
+  loading: null,
+  optionsLoaded: false,
+  optionsLoading: null,
 };
 const historyState = {
   revisions: [],
@@ -35,6 +56,16 @@ for (const input of document.querySelectorAll("[data-setting]")) {
   input.addEventListener("input", () => applySetting(input.dataset.setting, input.value));
 }
 
+for (const button of document.querySelectorAll("[data-sidebar-target]")) {
+  button.addEventListener("click", () => setSidebarPanel(button.dataset.sidebarTarget));
+}
+
+workspaceSelect?.addEventListener("change", () => {
+  const selected = workspaceState.workspaces.find((workspace) => workspace.id === workspaceSelect.value);
+  const href = safeReaderHref(selected?.href);
+  if (href) navigateToReaderHref(href);
+});
+
 searchInput?.addEventListener("input", updateSearchResults);
 searchOverlay?.addEventListener("click", (event) => {
   if (event.target === searchOverlay) closeSearch();
@@ -52,6 +83,23 @@ searchResults?.addEventListener("click", (event) => {
   setActiveSearchResult(Number(option.dataset.resultIndex), false);
   openSelectedSearchResult();
 });
+workspacePaletteInput?.addEventListener("input", updateWorkspacePaletteResults);
+workspacePaletteOverlay?.addEventListener("click", (event) => {
+  if (event.target === workspacePaletteOverlay) closeWorkspacePalette();
+});
+workspacePaletteResults?.addEventListener("mousemove", (event) => {
+  const option = event.target.closest("[role='option']");
+  if (option) setActiveWorkspaceResult(Number(option.dataset.resultIndex), false);
+});
+workspacePaletteResults?.addEventListener("mousedown", (event) => {
+  if (event.target.closest("[role='option']")) event.preventDefault();
+});
+workspacePaletteResults?.addEventListener("click", (event) => {
+  const option = event.target.closest("[role='option']");
+  if (!option) return;
+  setActiveWorkspaceResult(Number(option.dataset.resultIndex), false);
+  openSelectedWorkspace();
+});
 
 if (matchMedia("(max-width: 760px)").matches) app?.classList.add("toc-hidden");
 syncTocState();
@@ -60,13 +108,25 @@ restoreRevisionNavigation();
 restoreRequestedView();
 observeHeadings();
 renderDiagrams();
-loadHistory();
+if (workspaceId && workspaceRevisionId) loadWorkspaceContext();
+else loadHistory();
+loadWorkspaceOptions();
 
 function setView(view) {
   app.dataset.view = view;
   rawDiff.hidden = view !== "raw";
   for (const button of document.querySelectorAll("[data-view-target]")) {
     button.setAttribute("aria-pressed", String(button.dataset.viewTarget === view));
+  }
+}
+
+function setSidebarPanel(panel) {
+  if (!["files", "outline"].includes(panel)) return;
+  for (const button of document.querySelectorAll("[data-sidebar-target]")) {
+    button.setAttribute("aria-selected", String(button.dataset.sidebarTarget === panel));
+  }
+  for (const target of document.querySelectorAll("[data-sidebar-panel]")) {
+    target.hidden = target.dataset.sidebarPanel !== panel;
   }
 }
 
@@ -86,6 +146,9 @@ async function runAction(button) {
       break;
     case "close-search":
       closeSearch();
+      break;
+    case "close-workspace-palette":
+      closeWorkspacePalette();
       break;
     case "previous-revision":
       navigateRevision(-1);
@@ -120,11 +183,50 @@ async function runAction(button) {
 }
 
 document.addEventListener("keydown", (event) => {
-  const commandSearch = (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k";
-  if (commandSearch) {
+  const commandK = (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k";
+  if (commandK && event.shiftKey) {
+    event.preventDefault();
+    if (isWorkspacePaletteOpen()) closeWorkspacePalette();
+    else {
+      closeSearch();
+      openWorkspacePalette();
+    }
+    return;
+  }
+  if (commandK) {
     event.preventDefault();
     if (isSearchOpen()) closeSearch();
-    else openSearch();
+    else {
+      closeWorkspacePalette();
+      openSearch();
+    }
+    return;
+  }
+
+  if (isWorkspacePaletteOpen()) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeWorkspacePalette();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveWorkspaceSelection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter" && !event.isComposing) {
+      if (event.target.closest?.('[data-action="close-workspace-palette"]')) {
+        event.preventDefault();
+        closeWorkspacePalette();
+        return;
+      }
+      if (event.target === workspacePaletteInput) {
+        event.preventDefault();
+        openSelectedWorkspace();
+        return;
+      }
+    }
+    if (event.key === "Tab") trapPaletteFocus(workspacePaletteOverlay, event);
     return;
   }
 
@@ -151,7 +253,7 @@ document.addEventListener("keydown", (event) => {
         return;
       }
     }
-    if (event.key === "Tab") trapSearchFocus(event);
+    if (event.key === "Tab") trapPaletteFocus(searchOverlay, event);
     return;
   }
 
@@ -216,7 +318,7 @@ async function openSearch() {
   if (!searchOverlay || !searchInput || !searchResults || !searchStatus || isSearchOpen()) return;
   searchState.restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   searchOverlay.hidden = false;
-  setSearchBackgroundInert(true);
+  setPaletteBackgroundInert(searchOverlay, true);
   document.body.classList.add("mdv-search-open");
   searchInput.setAttribute("aria-expanded", "true");
   syncSearchTriggerState(true);
@@ -225,22 +327,16 @@ async function openSearch() {
   searchState.matches = [];
   searchState.activeIndex = -1;
   searchResults.replaceChildren();
-  setSearchStatus("文書を読み込んでいます…", "loading");
+  setSearchStatus("このワークツリーの文書を読み込んでいます…", "loading");
   requestAnimationFrame(() => searchInput.focus());
 
   searchState.controller?.abort();
   const controller = new AbortController();
   searchState.controller = controller;
   try {
-    const response = await fetch("/__mdview/catalog", {
-      headers: { accept: "application/json" },
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`catalog returned ${response.status}`);
-    const payload = await response.json();
+    await ensureWorkspaceDetails(controller.signal);
     if (controller !== searchState.controller || !isSearchOpen()) return;
-    searchState.entries = normalizeCatalog(payload);
+    searchState.entries = workspaceState.files.filter((entry) => entry.changeKind !== "deleted" || app.dataset.view === "changes");
     updateSearchResults();
   } catch (error) {
     if (error.name === "AbortError" || controller !== searchState.controller) return;
@@ -249,7 +345,7 @@ async function openSearch() {
     searchState.activeIndex = -1;
     searchResults.replaceChildren();
     setSearchStatus("文書一覧を読み込めませんでした。検索を閉じて、もう一度お試しください。", "error");
-    console.error("mdview: catalog fetch failed", error);
+    console.error("mdview: workspace files fetch failed", error);
   }
 }
 
@@ -258,7 +354,7 @@ function closeSearch() {
   searchState.controller?.abort();
   searchState.controller = null;
   searchOverlay.hidden = true;
-  setSearchBackgroundInert(false);
+  setPaletteBackgroundInert(searchOverlay, false);
   document.body.classList.remove("mdv-search-open");
   searchInput?.setAttribute("aria-expanded", "false");
   syncSearchTriggerState(false);
@@ -280,21 +376,17 @@ function syncSearchTriggerState(expanded) {
   }
 }
 
-function setSearchBackgroundInert(inert) {
-  if (!app || !searchOverlay) return;
+function setPaletteBackgroundInert(overlay, inert) {
+  if (!app || !overlay) return;
   for (const child of app.children) {
-    if (child !== searchOverlay) child.inert = inert;
+    if (child !== overlay) child.inert = inert;
   }
 }
 
 function updateSearchResults() {
   if (!searchResults || !searchInput || !searchStatus) return;
   const query = searchInput.value.trim();
-  const fileEntry = markdownPathEntry(query);
-  searchState.matches = [
-    ...(fileEntry ? [fileEntry] : []),
-    ...rankCatalog(searchState.entries, query),
-  ].slice(0, 80);
+  searchState.matches = rankCatalog(searchState.entries, query).slice(0, 80);
   searchResults.replaceChildren();
 
   for (const [index, entry] of searchState.matches.entries()) {
@@ -304,9 +396,7 @@ function updateSearchResults() {
     option.dataset.resultIndex = String(index);
     option.setAttribute("role", "option");
     option.setAttribute("aria-selected", "false");
-    if (entry.kind === "file") {
-      option.classList.add("is-file-action");
-    } else if (entry.current) {
+    if (entry.current) {
       option.classList.add("is-current");
       option.setAttribute("aria-current", "page");
     }
@@ -321,24 +411,9 @@ function updateSearchResults() {
 
     const context = document.createElement("span");
     context.className = "mdv-search-option-context";
-    if (entry.kind === "file") {
-      const action = document.createElement("span");
-      action.className = "mdv-search-file-action";
-      action.textContent = "ファイルを開く";
-      context.append(action);
-    } else {
-      const repository = document.createElement("span");
-      repository.textContent = entry.repo;
-      const branch = document.createElement("span");
-      branch.textContent = entry.branch;
-      context.append(repository, branch);
-    }
-    if (entry.kind !== "file" && entry.renderedAt) {
-      const renderedAt = document.createElement("time");
-      renderedAt.dateTime = entry.renderedAt;
-      renderedAt.textContent = formatRenderedAt(entry.renderedAt);
-      context.append(renderedAt);
-    }
+    const directory = document.createElement("span");
+    directory.textContent = entry.directory || "Markdown";
+    context.append(directory);
     if (entry.current) {
       const current = document.createElement("span");
       current.className = "mdv-search-current";
@@ -360,7 +435,7 @@ function updateSearchResults() {
   } else {
     const currentIndex = query ? 0 : searchState.matches.findIndex((entry) => entry.current);
     setActiveSearchResult(currentIndex >= 0 ? currentIndex : 0, false);
-    setSearchStatus(fileEntry ? "EnterでMarkdownファイルを読み込みます。" : `${searchState.matches.length} 件の文書`, "ready");
+    setSearchStatus(`${searchState.matches.length} 件の文書`, "ready");
   }
 }
 
@@ -388,86 +463,179 @@ function moveSearchSelection(direction) {
 
 async function openSelectedSearchResult() {
   const entry = searchState.matches[searchState.activeIndex];
-  if (entry?.kind === "file") {
-    await openMarkdownPath(entry.path);
-  } else if (entry?.href) {
-    location.assign(entry.href);
-  }
+  if (entry?.href) navigateToReaderHref(entry.href);
 }
 
-async function openMarkdownPath(filePath) {
-  if (searchState.opening) return;
-  searchState.opening = true;
-  searchInput.disabled = true;
-  setSearchStatus("Markdownファイルを読み込んでいます…", "loading");
+async function openWorkspacePalette() {
+  if (!workspacePaletteOverlay || !workspacePaletteInput || !workspacePaletteResults || !workspacePaletteStatus || isWorkspacePaletteOpen()) return;
+  workspacePaletteState.restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  workspacePaletteOverlay.hidden = false;
+  setPaletteBackgroundInert(workspacePaletteOverlay, true);
+  document.body.classList.add("mdv-search-open");
+  workspacePaletteInput.setAttribute("aria-expanded", "true");
+  workspacePaletteInput.value = "";
+  workspacePaletteState.matches = [];
+  workspacePaletteState.activeIndex = -1;
+  workspacePaletteResults.replaceChildren();
+  setWorkspacePaletteStatus("ワークツリーを読み込んでいます…", "loading");
+  requestAnimationFrame(() => workspacePaletteInput.focus());
+
   try {
-    const response = await fetch("/__mdview/open", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ path: filePath }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = response.status === 404
-        ? "Markdownファイルが見つかりません。パスを確認してください。"
-        : response.status === 400
-          ? "絶対パスの .md または .markdown ファイルを入力してください。"
-          : "Markdownファイルを読み込めませんでした。もう一度お試しください。";
-      setSearchStatus(message, "error");
-      return;
-    }
-    const href = safeCatalogHref(payload.href);
-    if (!href) throw new Error("open endpoint returned an invalid document URL");
-    location.assign(href);
+    await ensureWorkspaceOptions();
+    if (!isWorkspacePaletteOpen()) return;
+    updateWorkspacePaletteResults();
   } catch (error) {
-    setSearchStatus("Markdownファイルを読み込めませんでした。もう一度お試しください。", "error");
-    console.error("mdview: Markdown path open failed", error);
-  } finally {
-    searchState.opening = false;
-    searchInput.disabled = false;
-    searchInput.focus();
+    workspacePaletteState.matches = [];
+    workspacePaletteState.activeIndex = -1;
+    workspacePaletteResults.replaceChildren();
+    setWorkspacePaletteStatus("ワークツリーを読み込めませんでした。閉じて、もう一度お試しください。", "error");
+    console.error("mdview: worktree palette fetch failed", error);
   }
 }
 
-function markdownPathEntry(value) {
-  const filePath = stringValue(value);
-  if ((!filePath.startsWith("/") && !filePath.startsWith("~/")) || !/[.](?:md|markdown)$/i.test(filePath)) return null;
-  return {
-    kind: "file",
-    title: filenameTitle(filePath) || "Markdownファイル",
-    relativePath: filePath,
-    path: filePath,
-  };
+function closeWorkspacePalette() {
+  if (!workspacePaletteOverlay || workspacePaletteOverlay.hidden) return;
+  workspacePaletteOverlay.hidden = true;
+  setPaletteBackgroundInert(workspacePaletteOverlay, false);
+  document.body.classList.remove("mdv-search-open");
+  workspacePaletteInput?.setAttribute("aria-expanded", "false");
+  workspacePaletteInput?.removeAttribute("aria-activedescendant");
+  const restoreTarget = workspacePaletteState.restoreFocus?.isConnected
+    ? workspacePaletteState.restoreFocus
+    : workspaceSelect;
+  workspacePaletteState.restoreFocus = null;
+  restoreTarget?.focus();
 }
 
-function normalizeCatalog(payload) {
-  const values = Array.isArray(payload)
-    ? payload
-    : Array.isArray(payload?.entries)
-      ? payload.entries
-      : Array.isArray(payload?.documents)
-        ? payload.documents
-        : [];
-  return values.map((value, index) => normalizeCatalogEntry(value, index)).filter(Boolean);
+function isWorkspacePaletteOpen() {
+  return Boolean(workspacePaletteOverlay && !workspacePaletteOverlay.hidden);
 }
 
-function normalizeCatalogEntry(value, index) {
+function updateWorkspacePaletteResults() {
+  if (!workspacePaletteResults || !workspacePaletteInput || !workspacePaletteStatus) return;
+  const query = workspacePaletteInput.value.trim();
+  workspacePaletteState.matches = rankWorkspaces(workspaceState.workspaces, query).slice(0, 80);
+  workspacePaletteResults.replaceChildren();
+
+  for (const [index, entry] of workspacePaletteState.matches.entries()) {
+    const option = document.createElement("li");
+    option.id = `mdv-workspace-option-${index}`;
+    option.className = "mdv-search-option";
+    option.dataset.resultIndex = String(index);
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", "false");
+    if (entry.current) {
+      option.classList.add("is-current");
+      option.setAttribute("aria-current", "page");
+    }
+
+    const main = document.createElement("span");
+    main.className = "mdv-search-option-main";
+    const title = document.createElement("strong");
+    title.textContent = entry.worktree;
+    const repo = document.createElement("span");
+    repo.textContent = entry.repo;
+    main.append(title, repo);
+
+    const context = document.createElement("span");
+    context.className = "mdv-search-option-context";
+    const branch = document.createElement("span");
+    branch.textContent = entry.branch || "detached";
+    context.append(branch);
+    if (entry.current) {
+      const current = document.createElement("span");
+      current.className = "mdv-search-current";
+      current.textContent = "現在";
+      context.append(current);
+    }
+    option.append(main, context);
+    workspacePaletteResults.append(option);
+  }
+
+  if (!workspacePaletteState.matches.length && !workspaceState.workspaces.length) {
+    workspacePaletteState.activeIndex = -1;
+    workspacePaletteInput.removeAttribute("aria-activedescendant");
+    setWorkspacePaletteStatus("選択できるワークツリーはまだありません。", "empty");
+  } else if (!workspacePaletteState.matches.length) {
+    workspacePaletteState.activeIndex = -1;
+    workspacePaletteInput.removeAttribute("aria-activedescendant");
+    setWorkspacePaletteStatus(`「${query}」に一致するワークツリーはありません。`, "empty");
+  } else {
+    const currentIndex = query ? 0 : workspacePaletteState.matches.findIndex((entry) => entry.current);
+    setActiveWorkspaceResult(currentIndex >= 0 ? currentIndex : 0, false);
+    setWorkspacePaletteStatus(`${workspacePaletteState.matches.length} 件のワークツリー`, "ready");
+  }
+}
+
+function setWorkspacePaletteStatus(message, state) {
+  workspacePaletteStatus.textContent = message;
+  workspacePaletteStatus.dataset.state = state;
+}
+
+function setActiveWorkspaceResult(index, scroll = true) {
+  if (!workspacePaletteInput || !workspacePaletteResults || !workspacePaletteState.matches.length || !Number.isFinite(index)) return;
+  workspacePaletteState.activeIndex = (index + workspacePaletteState.matches.length) % workspacePaletteState.matches.length;
+  for (const [optionIndex, option] of [...workspacePaletteResults.children].entries()) {
+    const selected = optionIndex === workspacePaletteState.activeIndex;
+    option.classList.toggle("is-active", selected);
+    option.setAttribute("aria-selected", String(selected));
+    if (selected && scroll) option.scrollIntoView({ block: "nearest" });
+  }
+  workspacePaletteInput.setAttribute("aria-activedescendant", `mdv-workspace-option-${workspacePaletteState.activeIndex}`);
+}
+
+function moveWorkspaceSelection(direction) {
+  if (!workspacePaletteState.matches.length) return;
+  setActiveWorkspaceResult(workspacePaletteState.activeIndex + direction);
+}
+
+function openSelectedWorkspace() {
+  const entry = workspacePaletteState.matches[workspacePaletteState.activeIndex];
+  if (entry?.href) navigateToReaderHref(entry.href);
+}
+
+function rankWorkspaces(entries, query) {
+  const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  return entries.map((entry, index) => {
+    if (!terms.length) return { entry, score: entry.current ? 1_000 : -index };
+    let score = 0;
+    for (const term of terms) {
+      const fieldScore = Math.max(
+        fuzzyFieldScore(entry.worktree, term, 100),
+        fuzzyFieldScore(entry.repo, term, 80),
+        fuzzyFieldScore(entry.branch, term, 60),
+      );
+      if (!Number.isFinite(fieldScore)) return { entry, score: Number.NEGATIVE_INFINITY };
+      score += fieldScore;
+    }
+    if (entry.current) score += 4;
+    return { entry, score };
+  }).filter(({ score }) => Number.isFinite(score))
+    .sort((left, right) => right.score - left.score)
+    .map(({ entry }) => entry);
+}
+
+function normalizeWorkspaceFiles(payload) {
+  const values = Array.isArray(payload?.files) ? payload.files : [];
+  return values.map((value, index) => normalizeWorkspaceFile(value, index)).filter(Boolean);
+}
+
+function normalizeWorkspaceFile(value, index) {
   if (!value || typeof value !== "object" || typeof value.href !== "string" || !value.href) return null;
-  const href = safeCatalogHref(value.href);
+  const href = safeReaderHref(value.href);
   if (!href) return null;
-  const relativePath = stringValue(value.relativePath ?? value.path);
+  const relativePath = stringValue(value.relativePath);
+  const slashIndex = relativePath.lastIndexOf("/");
   const entry = {
     title: stringValue(value.title) || filenameTitle(relativePath) || `Document ${index + 1}`,
-    repo: stringValue(value.repo),
-    branch: stringValue(value.branch),
     relativePath,
-    sourcePath: stringValue(value.sourcePath ?? value.absolutePath),
-    source: stringValue(value.source),
-    renderedAt: stringValue(value.renderedAt),
+    directory: slashIndex >= 0 ? relativePath.slice(0, slashIndex) : "",
+    documentId: stringValue(value.documentId),
+    changeKind: ["added", "modified", "deleted"].includes(value.changeKind) ? value.changeKind : null,
     href,
     index,
   };
-  entry.current = isCurrentCatalogEntry(entry);
+  entry.current = entry.documentId === documentId;
   return entry;
 }
 
@@ -480,8 +648,7 @@ function rankCatalog(entries, query) {
       const fieldScore = Math.max(
         fuzzyFieldScore(entry.title, term, 80),
         fuzzyFieldScore(entry.relativePath, term, 60),
-        fuzzyFieldScore(entry.repo, term, 45),
-        fuzzyFieldScore(entry.branch, term, 35),
+        fuzzyFieldScore(entry.directory, term, 45),
       );
       if (!Number.isFinite(fieldScore)) return { entry, score: Number.NEGATIVE_INFINITY };
       score += fieldScore;
@@ -514,28 +681,8 @@ function fuzzyFieldScore(value, term, weight) {
   return score - Math.min(field.length - term.length, 60) * 0.12;
 }
 
-function isCurrentCatalogEntry(entry) {
-  const currentSource = normalizePath(app?.dataset.currentSource);
-  if (currentSource && normalizePath(entry.sourcePath) === currentSource) return true;
-  const sameContext = entry.repo === stringValue(app?.dataset.currentRepo)
-    && entry.branch === stringValue(app?.dataset.currentBranch)
-    && normalizePath(entry.relativePath) === normalizePath(app?.dataset.currentRelativePath);
-  if (sameContext) return true;
-  try {
-    return new URL(entry.href, location.href).pathname === location.pathname;
-  } catch {
-    return false;
-  }
-}
-
 function normalizeSearchText(value) {
   return stringValue(value).normalize("NFKC").toLocaleLowerCase("ja");
-}
-
-function normalizePath(value) {
-  let path = stringValue(value);
-  try { path = decodeURIComponent(path); } catch { /* Keep the encoded value. */ }
-  return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
 function stringValue(value) {
@@ -547,24 +694,11 @@ function filenameTitle(relativePath) {
   return name.replace(/\.(?:md|markdown)$/i, "");
 }
 
-function formatRenderedAt(value) {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return "";
-  const elapsed = Math.max(0, Date.now() - timestamp);
-  if (elapsed < 60_000) return "just now";
-  if (elapsed < 60 * 60_000) return `${Math.floor(elapsed / 60_000)}分前`;
-  if (elapsed < 24 * 60 * 60_000) return `${Math.floor(elapsed / (60 * 60_000))}時間前`;
-  return new Intl.DateTimeFormat("ja-JP", {
-    month: "short",
-    day: "numeric",
-    ...(new Date(timestamp).getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
-  }).format(timestamp);
-}
-
-function safeCatalogHref(value) {
+function safeReaderHref(value) {
   try {
     const url = new URL(value, location.origin);
-    if (url.origin !== location.origin || url.search || url.hash || !url.pathname.startsWith("/documents/")) return "";
+    const workspaceDocument = /^\/__mdview\/workspaces\/[a-f0-9]{24}\/revisions\/[a-f0-9]{24}\/files\/[a-f0-9]{24}$/.test(url.pathname);
+    if (url.origin !== location.origin || url.search || url.hash || (!url.pathname.startsWith("/documents/") && !workspaceDocument)) return "";
     return url.pathname;
   } catch {
     return "";
@@ -576,8 +710,9 @@ function isEditableTarget(target) {
   return Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])"));
 }
 
-function trapSearchFocus(event) {
-  const focusable = [...searchOverlay.querySelectorAll("input, button:not([disabled])")].filter((element) => !element.hidden);
+function trapPaletteFocus(overlay, event) {
+  if (!overlay) return;
+  const focusable = [...overlay.querySelectorAll("input, button:not([disabled])")].filter((element) => !element.hidden);
   if (!focusable.length) return;
   const first = focusable[0];
   const last = focusable.at(-1);
@@ -588,6 +723,144 @@ function trapSearchFocus(event) {
     event.preventDefault();
     first.focus();
   }
+}
+
+async function loadWorkspaceContext() {
+  try {
+    await ensureWorkspaceDetails();
+  } catch (error) {
+    if (workspaceFilesStatus) workspaceFilesStatus.textContent = "ワークツリーのファイルを読み込めませんでした";
+    console.error("mdview: workspace context fetch failed", error);
+    loadHistory();
+  }
+}
+
+async function ensureWorkspaceDetails(signal) {
+  if (workspaceState.payload) return workspaceState.payload;
+  if (!workspaceId || !workspaceRevisionId) throw new Error("This document has no workspace revision.");
+  if (workspaceState.loading) return workspaceState.loading;
+  const params = new URLSearchParams({ revision: workspaceRevisionId });
+  if (documentId) params.set("document", documentId);
+  const operation = fetch(`/__mdview/workspaces/${encodeURIComponent(workspaceId)}?${params}`, {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+    signal,
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`workspace returned ${response.status}`);
+    const payload = await response.json();
+    workspaceState.payload = payload;
+    workspaceState.files = normalizeWorkspaceFiles(payload);
+    renderWorkspaceFiles();
+    historyState.revisions = normalizeHistory(payload);
+    historyState.currentIndex = historyState.revisions.findIndex((revision) => revision.id === workspaceRevisionId);
+    refreshHistoryCursor();
+    return payload;
+  }).finally(() => {
+    workspaceState.loading = null;
+  });
+  workspaceState.loading = operation;
+  return operation;
+}
+
+async function loadWorkspaceOptions() {
+  try {
+    await ensureWorkspaceOptions();
+  } catch (error) {
+    if (workspaceSelect) workspaceSelect.disabled = true;
+    console.error("mdview: worktree list fetch failed", error);
+  }
+}
+
+async function ensureWorkspaceOptions() {
+  if (workspaceState.optionsLoaded) return workspaceState.workspaces;
+  if (workspaceState.optionsLoading) return workspaceState.optionsLoading;
+  const operation = fetch("/__mdview/workspaces", {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`workspaces returned ${response.status}`);
+    const payload = await response.json();
+    workspaceState.workspaces = Array.isArray(payload) ? payload.map(normalizeWorkspaceSummary).filter(Boolean) : [];
+    workspaceState.optionsLoaded = true;
+    if (workspaceSelect) {
+      workspaceSelect.replaceChildren();
+      for (const workspace of workspaceState.workspaces) {
+        const option = document.createElement("option");
+        option.value = workspace.id;
+        option.textContent = `${workspace.repo} / ${workspace.worktree}`;
+        option.selected = workspace.id === workspaceId;
+        workspaceSelect.append(option);
+      }
+      if (!workspaceState.workspaces.some((workspace) => workspace.id === workspaceId)) {
+        const option = document.createElement("option");
+        option.value = workspaceId;
+        option.textContent = app?.dataset.currentWorktree || app?.dataset.currentRepo || "Current worktree";
+        option.selected = true;
+        workspaceSelect.prepend(option);
+      }
+      workspaceSelect.disabled = workspaceState.workspaces.length < 2;
+    }
+    return workspaceState.workspaces;
+  }).finally(() => {
+    workspaceState.optionsLoading = null;
+  });
+  workspaceState.optionsLoading = operation;
+  return operation;
+}
+
+function normalizeWorkspaceSummary(value) {
+  if (!value || typeof value !== "object" || !/^[a-f0-9]{24}$/.test(value.id)) return null;
+  const href = safeReaderHref(value.href);
+  if (!href) return null;
+  return {
+    id: value.id,
+    repo: stringValue(value.repo),
+    worktree: stringValue(value.worktree),
+    branch: stringValue(value.branch),
+    href,
+    current: value.id === workspaceId,
+  };
+}
+
+function renderWorkspaceFiles() {
+  if (!workspaceFiles || !workspaceFilesStatus) return;
+  workspaceFiles.replaceChildren();
+  workspaceFilesStatus.hidden = workspaceState.files.length > 0;
+  if (!workspaceState.files.length) {
+    workspaceFilesStatus.textContent = "この時点にMarkdownはありません";
+    return;
+  }
+  for (const entry of workspaceState.files) {
+    const link = document.createElement("a");
+    link.href = entry.href;
+    link.className = "mdv-workspace-file";
+    link.classList.toggle("is-current", entry.current);
+    link.classList.toggle("is-deleted", entry.changeKind === "deleted");
+    if (entry.current) link.setAttribute("aria-current", "page");
+    if (entry.changeKind) link.dataset.changeKind = entry.changeKind;
+    const title = document.createElement("strong");
+    title.textContent = entry.title;
+    const path = document.createElement("span");
+    path.textContent = entry.relativePath;
+    link.append(title, path);
+    if (entry.changeKind) {
+      const status = document.createElement("em");
+      status.className = "mdv-workspace-file-status";
+      status.textContent = entry.changeKind === "added" ? "追加" : entry.changeKind === "deleted" ? "削除" : "変更";
+      link.append(status);
+    }
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      navigateToReaderHref(entry.href);
+    });
+    workspaceFiles.append(link);
+  }
+}
+
+function navigateToReaderHref(href) {
+  const destination = new URL(href, location.origin);
+  destination.searchParams.set("view", app.dataset.view);
+  location.assign(`${destination.pathname}${destination.search}`);
 }
 
 async function loadHistory() {
@@ -630,7 +903,7 @@ function normalizeHistory(payload) {
   if (!Array.isArray(payload?.revisions)) return [];
   return payload.revisions.map((value) => {
     if (!value || typeof value !== "object" || !/^[a-f0-9]{24}$/.test(value.id)) return null;
-    const href = safeCatalogHref(value.href);
+    const href = safeReaderHref(value.href);
     if (!href || !Number.isFinite(Date.parse(value.renderedAt))) return null;
     return {
       id: value.id,
@@ -706,7 +979,7 @@ function sessionTitleIcon() {
 function navigateRevision(direction) {
   const target = historyState.revisions[historyState.currentIndex + direction];
   if (!target) {
-    showToast(historyState.loading ? "履歴を読み込んでいます" : direction < 0 ? "これが最初の版です" : "これが最新の版です");
+    showToast(historyState.loading ? "履歴を読み込んでいます" : direction < 0 ? "これが最初の作業です" : "これが最新の作業です");
     return;
   }
   const headingId = currentHeadingId();

@@ -4,6 +4,7 @@ import {
   appendFile,
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -16,7 +17,13 @@ import path from "node:path";
 import process from "node:process";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { worktreeLabel } from "./codex-context.mjs";
 import { storeHistorySnapshot } from "./history.mjs";
+import {
+  readWorkspaceHistoryForRoot,
+  registerWorkspaceRevision,
+  workspaceFilesEqual,
+} from "./workspace-history.mjs";
 
 const execFileAsync = promisify(execFile);
 const IGNORED_DIRECTORIES = new Set([
@@ -88,6 +95,32 @@ async function gitRoot(cwd) {
   } catch {
     return null;
   }
+}
+
+async function gitValue(root, args) {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function workspaceMeta(root) {
+  const [branch, head] = await Promise.all([
+    gitValue(root, ["branch", "--show-current"]),
+    gitValue(root, ["rev-parse", "--short", "HEAD"]),
+  ]);
+  return {
+    repo: path.basename(root),
+    worktree: worktreeLabel(root) || path.basename(root),
+    branch: branch || "detached",
+    head,
+  };
 }
 
 async function gitMarkdownPaths(root) {
@@ -292,50 +325,115 @@ export async function processHookEvent(payload, options = {}) {
   const stateDir = path.resolve(options.stateDir || defaultStateDir());
   const now = options.now ?? Date.now();
   await cleanupHookStates({ stateDir, now, ttlMs: options.ttlMs });
-  const snapshot = await scanMarkdownFiles(payload.cwd);
   const filePath = hookStatePath(payload, { stateDir });
   const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
+  return withHookStateLock(filePath, async () => {
+    const snapshot = await scanMarkdownFiles(payload.cwd);
 
-  if (eventName === "UserPromptSubmit") {
-    const existing = await readState(filePath);
-    if (!existing) await persistSnapshotFiles(snapshot, Object.keys(snapshot.files), historyOptions);
-    const created = await atomicWriteJson(filePath, stateRecord(snapshot, now), { createOnly: true });
-    return {
-      action: created ? "baseline-created" : "baseline-preserved",
+    if (eventName === "UserPromptSubmit") {
+      const existing = await readState(filePath);
+      if (!existing) await persistSnapshotFiles(snapshot, Object.keys(snapshot.files), historyOptions);
+      const created = await atomicWriteJson(filePath, stateRecord(snapshot, now), { createOnly: true });
+      return {
+        action: created ? "baseline-created" : "baseline-preserved",
+        root: snapshot.root,
+        statePath: filePath,
+        changedFiles: [],
+        deletedFiles: [],
+      };
+    }
+
+    const previous = await readState(filePath);
+    const differences = previous
+      ? compareSnapshots(previous.files, snapshot.files)
+      : { changed: [], deleted: [] };
+    await persistSnapshotFiles(snapshot, previous ? differences.changed : Object.keys(snapshot.files), historyOptions);
+
+    const changedFiles = differences.changed.map((relativePath) => path.join(snapshot.root, relativePath));
+    const deletedFiles = differences.deleted.map((relativePath) =>
+      path.join(previous?.root || snapshot.root, relativePath),
+    );
+    const renderedAt = new Date(now).toISOString();
+    const workspaceChanges = [
+      ...differences.changed.map((relativePath) => ({
+        path: portableRelative(relativePath),
+        beforeContentHash: previous?.files?.[relativePath] ?? null,
+        contentHash: snapshot.files[relativePath],
+      })),
+      ...differences.deleted.map((relativePath) => ({
+        path: portableRelative(relativePath),
+        beforeContentHash: previous?.files?.[relativePath] ?? null,
+        contentHash: null,
+      })),
+    ];
+    const existingWorkspace = previous && workspaceChanges.length === 0
+      ? await readWorkspaceHistoryForRoot(snapshot.root, historyOptions)
+      : null;
+    const existingRevision = existingWorkspace?.revisions.at(-1);
+    const workspaceRevision = existingRevision && workspaceFilesEqual(existingRevision.files, snapshot.files)
+      ? { manifest: existingWorkspace, revision: existingRevision, added: false }
+      : await registerWorkspaceRevision({
+        root: snapshot.root,
+        renderedAt,
+        source: "hook",
+        sessionId: payload.session_id,
+        turnId: payload.turn_id,
+        meta: await workspaceMeta(snapshot.root),
+        files: snapshot.files,
+        changes: workspaceChanges,
+      }, historyOptions);
+    if (typeof options.beforeStateAdvance === "function") await options.beforeStateAdvance(workspaceRevision, payload);
+    await atomicWriteJson(filePath, stateRecord(snapshot, now, previous));
+    const result = {
+      action: previous ? "compared" : "baseline-created",
       root: snapshot.root,
       statePath: filePath,
-      changedFiles: [],
-      deletedFiles: [],
+      renderedAt: workspaceRevision.revision.renderedAt,
+      workspaceId: workspaceRevision.manifest.workspaceId,
+      workspaceRevisionId: workspaceRevision.revision.id,
+      changedFiles,
+      deletedFiles,
+      changes: differences.changed.map((relativePath) => ({
+        filePath: path.join(snapshot.root, relativePath),
+        beforeContentHash: previous?.files?.[relativePath] ?? null,
+        contentHash: snapshot.files[relativePath],
+      })),
     };
-  }
+    if (changedFiles.length > 0 && typeof options.onChangedFiles === "function") {
+      await options.onChangedFiles(result, payload);
+    }
+    return result;
+  });
+}
 
-  const previous = await readState(filePath);
-  const differences = previous
-    ? compareSnapshots(previous.files, snapshot.files)
-    : { changed: [], deleted: [] };
-  await persistSnapshotFiles(snapshot, differences.changed, historyOptions);
-  await atomicWriteJson(filePath, stateRecord(snapshot, now, previous));
-
-  const changedFiles = differences.changed.map((relativePath) => path.join(snapshot.root, relativePath));
-  const deletedFiles = differences.deleted.map((relativePath) =>
-    path.join(previous?.root || snapshot.root, relativePath),
-  );
-  const result = {
-    action: previous ? "compared" : "baseline-created",
-    root: snapshot.root,
-    statePath: filePath,
-    changedFiles,
-    deletedFiles,
-    changes: differences.changed.map((relativePath) => ({
-      filePath: path.join(snapshot.root, relativePath),
-      beforeContentHash: previous?.files?.[relativePath] ?? null,
-      contentHash: snapshot.files[relativePath],
-    })),
-  };
-  if (changedFiles.length > 0 && typeof options.onChangedFiles === "function") {
-    await options.onChangedFiles(result, payload);
+async function withHookStateLock(filePath, operation) {
+  const lockPath = `${filePath}.lock`;
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  let handle;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      handle = await open(lockPath, "wx", 0o600);
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST" || attempt === 99) throw error;
+      try {
+        if (Date.now() - (await stat(lockPath)).mtimeMs > 5 * 60 * 1000) {
+          await unlink(lockPath);
+          continue;
+        }
+      } catch (staleError) {
+        if (staleError?.code !== "ENOENT") throw staleError;
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
   }
-  return result;
+  try {
+    return await operation();
+  } finally {
+    await handle?.close();
+    await unlink(lockPath).catch(() => {});
+  }
 }
 
 async function persistSnapshotFiles(snapshot, relativePaths, historyOptions) {

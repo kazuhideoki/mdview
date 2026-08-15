@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -58,6 +58,11 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.match(html, /data-view-target="read"[^>]+aria-keyshortcuts="R 1"[^>]+title="Read \(R \/ 1\)"/);
     assert.match(html, /data-view-target="changes"[^>]+aria-keyshortcuts="C 2"[^>]+title="Changes \(C \/ 2\)"/);
     assert.match(html, /data-view-target="raw"[^>]+aria-keyshortcuts="D 3"[^>]+title="Raw diff \(D \/ 3\)"/);
+    assert.match(html, /id="mdv-workspace-palette-dialog"[^>]+aria-labelledby="mdv-workspace-palette-title"/);
+    assert.match(html, /aria-label="ワークツリーを検索"/);
+    assert.doesNotMatch(html, /data-workspace-files|id="mdv-search-dialog"|data-action="open-search"/);
+    assert.match(html, /aria-label="目次"/);
+    assert.match(html, /同じファイルの変更履歴/);
     assert.match(html, /href="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]css"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]js"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/mermaid[.]min[.][a-f0-9]{64}[.]js"/);
@@ -133,7 +138,7 @@ test("rewrites only relative Markdown links through the mdview follow route", as
     const html = await readFile(result.outputPath, "utf8");
     assert.doesNotMatch(html, /mdv-session-title/);
     const sourceId = catalogEntryId(markdownPath);
-    assert.match(html, new RegExp(`href="/__mdview/follow/${sourceId}[?]target=[.]%2Fguide[.]md&amp;fragment=usage"`));
+    assert.match(html, new RegExp(`href="/__mdview/follow/${sourceId}[?]target=[.]%2Fguide[.]md&amp;fragment=usage&amp;workspace=[a-f0-9]{24}&amp;revision=[a-f0-9]{24}"`));
     assert.match(html, /href="#links"/);
     assert.match(html, /href="https:\/\/example[.]com\/remote[.]md"/);
     assert.match(html, /href="mailto:docs@example[.]com"/);
@@ -520,6 +525,63 @@ test("recreates a missing latest HTML cache without adding a duplicate revision"
     await access(second.outputPath);
     const { readDocumentHistory } = await import(`../src/history.mjs?rehydrate=${Date.now()}`);
     assert.equal((await readDocumentHistory(first.catalogEntry.id, { root: historyRoot })).revisions.length, 1);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("renders any Markdown file at a worktree-wide revision without adding document history", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-workspace-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const repo = path.join(root, "repo");
+  const firstPath = path.join(repo, "first.md");
+  const secondPath = path.join(repo, "second.md");
+  await mkdir(repo);
+  await writeFile(firstPath, "# First\n\nStable.\n");
+  await writeFile(secondPath, "# Second\n\nBefore.\n");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile, renderWorkspaceRevision } = await import(`../src/renderer.mjs?workspace=${Date.now()}`);
+    await renderMarkdownFile(firstPath, {
+      historyRoot,
+      meta: { repo: "repo", worktree: "feature/docs", branch: "feature/docs", relativePath: "first.md", repoRoot: repo },
+      catalogContext: { source: "manual", renderedAt: "2026-08-15T10:00:00.000Z" },
+    });
+    await writeFile(secondPath, "# Second\n\nAfter.\n");
+    await renderMarkdownFile(secondPath, {
+      historyRoot,
+      meta: { repo: "repo", worktree: "feature/docs", branch: "feature/docs", relativePath: "second.md", repoRoot: repo },
+      catalogContext: { source: "manual", renderedAt: "2026-08-15T11:00:00.000Z" },
+    });
+    const { readWorkspaceHistoryForRoot, workspaceDocumentId } = await import(`../src/workspace-history.mjs?workspace=${Date.now()}`);
+    const workspace = await readWorkspaceHistoryForRoot(repo, { root: historyRoot });
+    assert.equal(workspace.revisions.length, 2);
+    const revision = workspace.revisions[1];
+    const stable = await renderWorkspaceRevision(workspace.workspaceId, revision.id, workspaceDocumentId(repo, "first.md"), { historyRoot });
+    assert.match(stable.html, /data-workspace-id="[a-f0-9]{24}"/);
+    assert.match(stable.html, /data-workspace-revision-id="[a-f0-9]{24}"/);
+    assert.match(stable.html, /<base href="\/documents\/workspaces\//);
+    assert.match(stable.html, /Stable[.]/);
+
+    const changed = await renderWorkspaceRevision(workspace.workspaceId, revision.id, workspaceDocumentId(repo, "second.md"), { historyRoot });
+    assert.match(changed.html, /data-diff-kind="removed"[^>]*>Before[.]<\/p>/);
+    assert.match(changed.html, /data-diff-kind="added"[^>]*>After[.]<\/p>/);
+
+    await rm(firstPath);
+    await renderMarkdownFile(secondPath, {
+      historyRoot,
+      meta: { repo: "repo", worktree: "feature/docs", branch: "feature/docs", relativePath: "second.md", repoRoot: repo },
+      catalogContext: { source: "manual", renderedAt: "2026-08-15T12:00:00.000Z" },
+    });
+    const deletedWorkspace = await readWorkspaceHistoryForRoot(repo, { root: historyRoot });
+    const deletedRevision = deletedWorkspace.revisions.at(-1);
+    const deleted = await renderWorkspaceRevision(workspace.workspaceId, deletedRevision.id, workspaceDocumentId(repo, "first.md"), { historyRoot });
+    assert.equal(deleted.deleted, true);
+    assert.match(deleted.html, /data-diff-kind="removed"[^>]*>Stable[.]<\/p>/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

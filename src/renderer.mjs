@@ -7,6 +7,7 @@ import { visit } from "unist-util-visit";
 import { ensureAssets } from "./assets.mjs";
 import { catalogEntryForSource, catalogEntryId, registerCatalogEntry } from "./catalog.mjs";
 import { changedLinesFromPatch, documentMeta, lineChangesFromPatch, parseMarkdown, rangeHasChange, rawDiffBetweenFiles, rawDiffForFile } from "./document.mjs";
+import { scanMarkdownFiles } from "./hook-event.mjs";
 import {
   historyRevisionId,
   historySnapshotPath,
@@ -25,6 +26,14 @@ import { cacheRoot, catalogRoot, documentOutputPath, documentUrl } from "./paths
 import { renderDocument } from "./render-document.mjs";
 import { pageTemplate } from "./template.mjs";
 import { branchDisplay, resolveCodexSessionTitle } from "./codex-context.mjs";
+import {
+  readWorkspaceHistory,
+  readWorkspaceHistoryForRoot,
+  registerWorkspaceRevision,
+  workspaceFileAtRevision,
+  workspaceFilesEqual,
+  workspaceHistoryId,
+} from "./workspace-history.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -49,6 +58,18 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const contentHash = markdownContentHash(markdown);
   const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
   await storeHistorySnapshot(markdown, { ...historyOptions, contentHash });
+  const workspaceContext = await workspaceContextForRender({
+    absolutePath,
+    markdown,
+    contentHash,
+    meta,
+    catalogContext,
+    historyOptions,
+  });
+  if (workspaceContext) {
+    meta.workspaceId = workspaceContext.workspaceId;
+    meta.workspaceRevisionId = workspaceContext.revision.id;
+  }
   const history = await readDocumentHistory(documentId, historyOptions);
   const latestRevision = history.revisions.at(-1);
   const hasTurnBaseline = Object.hasOwn(options, "beforeContentHash");
@@ -213,10 +234,139 @@ export async function renderHistoryRevision(documentId, revisionId, options = {}
   return { ...result, outputPath, revision, meta };
 }
 
+export async function renderWorkspaceRevision(workspaceId, workspaceRevisionId, documentId, options = {}) {
+  const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
+  const workspace = await readWorkspaceHistory(workspaceId, historyOptions);
+  const file = workspaceFileAtRevision(workspace, workspaceRevisionId, documentId);
+  if (!file) return null;
+  const { revision, relativePath, change } = file;
+  const deleted = change?.kind === "deleted";
+  const absolutePath = path.join(file.root, ...relativePath.split("/"));
+  const contentHash = deleted ? null : file.contentHash;
+  const markdown = deleted ? "" : await readHistorySnapshot(contentHash, historyOptions);
+  const beforePath = change?.beforeContentHash
+    ? historySnapshotPath(change.beforeContentHash, historyOptions)
+    : null;
+  const afterPath = contentHash ? historySnapshotPath(contentHash, historyOptions) : null;
+  const revisionDiff = change
+    ? await rawDiffBetweenFiles(beforePath, afterPath, relativePath)
+    : "";
+  const outputDir = path.join(cacheRoot(), "documents", "workspaces", workspaceId, workspaceRevisionId, documentId);
+  const meta = {
+    absolutePath,
+    sourcePath: absolutePath,
+    repoRoot: file.root,
+    repo: revision.meta.repo,
+    worktree: revision.meta.worktree,
+    branch: revision.meta.branch,
+    head: revision.meta.head,
+    branchDisplay: branchDisplay(revision.meta.branch, revision.meta.head),
+    relativePath,
+    displayPath: `${revision.meta.repo} / ${revision.meta.branch} / ${relativePath}`,
+    changedLines: changedLinesFromPatch(revisionDiff),
+    changeCount: 0,
+    documentId,
+    revisionId: historyRevisionId({
+      documentId,
+      renderedAt: revision.renderedAt,
+      contentHash: contentHash || change.beforeContentHash,
+      sessionId: revision.sessionId,
+      turnId: revision.turnId,
+    }),
+    workspaceId,
+    workspaceRevisionId,
+    documentBaseHref: `/documents/workspaces/${workspaceId}/${workspaceRevisionId}/${documentId}/`,
+    sessionTitle: await sessionTitle(revision.sessionId, options),
+  };
+  const result = await renderMarkdownPage({
+    markdown,
+    beforePath,
+    revisionDiff,
+    changedLines: meta.changedLines,
+    absolutePath,
+    meta,
+    outputDir,
+    historyOptions,
+    updatedLabel: deleted
+      ? `Deleted in workspace revision · ${revision.renderedAt}`
+      : `Workspace revision · ${revision.renderedAt}`,
+  });
+  const outputPath = path.join(outputDir, "index.html");
+  await atomicWrite(outputPath, result.html);
+  return { ...result, outputPath, revision, meta, deleted };
+}
+
 async function sessionTitle(sessionId, options) {
   if (!sessionId) return null;
   const resolver = options.resolveSessionTitle || resolveCodexSessionTitle;
   return resolver(sessionId);
+}
+
+async function workspaceContextForRender({ absolutePath, markdown, contentHash, meta, catalogContext, historyOptions }) {
+  const root = path.resolve(meta.repoRoot || path.dirname(absolutePath));
+  const relativePath = path.relative(root, absolutePath).split(path.sep).join("/");
+  let workspace = await readWorkspaceHistoryForRoot(root, historyOptions);
+  let revision;
+  if (!["hook", "codex-hook"].includes(catalogContext.source)) {
+    const captured = await captureManualWorkspaceRevision({
+      root,
+      relativePath,
+      markdown,
+      contentHash,
+      meta,
+      catalogContext,
+      historyOptions,
+      workspace,
+    });
+    workspace = captured.manifest;
+    revision = captured.revision;
+  } else {
+    revision = [...workspace.revisions].reverse().find((candidate) => (
+      candidate.files[relativePath] === contentHash
+        && (!catalogContext.sessionId || candidate.sessionId === catalogContext.sessionId)
+        && (!catalogContext.turnId || candidate.turnId === catalogContext.turnId)
+    ));
+  }
+  return revision ? { workspaceId: workspace.workspaceId || workspaceHistoryId(root), revision } : null;
+}
+
+async function captureManualWorkspaceRevision({ root, relativePath, markdown, contentHash, meta, catalogContext, historyOptions, workspace }) {
+  const snapshot = await scanMarkdownFiles(root);
+  snapshot.files[relativePath] = contentHash;
+  for (const [file, expectedHash] of Object.entries(snapshot.files)) {
+    const contents = file === relativePath
+      ? markdown
+      : await readFile(path.join(snapshot.root, ...file.split("/")), "utf8");
+    await storeHistorySnapshot(contents, { ...historyOptions, contentHash: expectedHash });
+  }
+  const previous = workspace.revisions.at(-1);
+  if (previous && workspaceFilesEqual(previous.files, snapshot.files)) {
+    return { manifest: workspace, revision: previous, added: false };
+  }
+  return registerWorkspaceRevision({
+    root: snapshot.root,
+    renderedAt: catalogContext.renderedAt,
+    source: catalogContext.source || "manual",
+    sessionId: catalogContext.sessionId ?? null,
+    turnId: catalogContext.turnId ?? null,
+    meta: {
+      repo: meta.repo,
+      worktree: meta.worktree,
+      branch: meta.branch,
+      head: meta.head,
+    },
+    files: snapshot.files,
+    changes: previous ? workspaceChanges(previous.files, snapshot.files) : [],
+  }, historyOptions);
+}
+
+function workspaceChanges(previous, current) {
+  const paths = new Set([...Object.keys(previous), ...Object.keys(current)]);
+  return [...paths].filter((relativePath) => previous[relativePath] !== current[relativePath]).map((relativePath) => ({
+    path: relativePath,
+    beforeContentHash: previous[relativePath] ?? null,
+    contentHash: current[relativePath] ?? null,
+  }));
 }
 
 async function renderMarkdownPage({
@@ -233,13 +383,13 @@ async function renderMarkdownPage({
   updatedLabel,
 }) {
   const tree = parseMarkdown(markdown);
-  rewriteLocalMarkdownLinks(tree, absolutePath);
+  rewriteLocalMarkdownLinks(tree, absolutePath, meta);
   const rawDiff = revisionDiff ?? await rawDiffForFile(absolutePath, meta.repoRoot);
   const lineChanges = lineChangesFromPatch(rawDiff);
   let beforeTree = null;
   if (beforePath && (lineChanges.removedLines.length > 0 || lineChanges.addedLines.length > 0)) {
     beforeTree = parseMarkdown(await readFile(beforePath, "utf8"));
-    rewriteLocalMarkdownLinks(beforeTree, absolutePath);
+    rewriteLocalMarkdownLinks(beforeTree, absolutePath, meta);
   }
   meta.localAssets = await prepareLocalImages(tree, absolutePath, meta, outputDir, {
     historyOptions,
@@ -500,13 +650,17 @@ async function directoryExists(directory) {
   }
 }
 
-export function rewriteLocalMarkdownLinks(tree, sourcePath) {
+export function rewriteLocalMarkdownLinks(tree, sourcePath, meta = {}) {
   const sourceId = catalogEntryId(sourcePath);
   visit(tree, "link", (node) => {
     const target = localMarkdownTarget(node.url);
     if (!target) return;
     const params = new URLSearchParams({ target: target.path });
     if (target.fragment) params.set("fragment", target.fragment);
+    if (meta.workspaceId && meta.workspaceRevisionId) {
+      params.set("workspace", meta.workspaceId);
+      params.set("revision", meta.workspaceRevisionId);
+    }
     node.url = `/__mdview/follow/${sourceId}?${params}`;
   });
 }
