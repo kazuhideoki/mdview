@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -26,6 +27,32 @@ export function worktreeLabel(repoRoot) {
 export function branchDisplay(branch, head) {
   if (typeof branch === "string" && branch && branch !== "detached") return branch;
   return typeof head === "string" && head ? `detached@${head}` : "detached";
+}
+
+export async function resolveGitRepositoryContext(repoRoot, options = {}) {
+  if (typeof repoRoot !== "string" || !repoRoot) return null;
+  const root = path.resolve(repoRoot);
+  const run = options.execFile || execFileAsync;
+  try {
+    const [{ stdout: commonDirOutput }, { stdout: commitOutput }, { stdout: parentsOutput }] = await Promise.all([
+      run("git", ["rev-parse", "--git-common-dir"], { cwd: root, encoding: "utf8" }),
+      run("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }),
+      run("git", ["rev-list", "--parents", "-n", "1", "HEAD"], { cwd: root, encoding: "utf8" }),
+    ]);
+    const unresolvedCommonDir = commonDirOutput.trim();
+    const commonDir = await realpath(path.resolve(root, unresolvedCommonDir));
+    const commit = commitOutput.trim();
+    const commitLine = parentsOutput.trim().split(/\s+/).filter(Boolean);
+    if (!/^[a-f0-9]{40}$/i.test(commit) || commitLine[0] !== commit) return null;
+    return {
+      repositoryId: createHash("sha256").update(commonDir).digest("hex").slice(0, 24),
+      commonDir,
+      commit,
+      parents: commitLine.slice(1).filter((value) => /^[a-f0-9]{40}$/i.test(value)),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveCodexSessionTitle(sessionId, options = {}) {

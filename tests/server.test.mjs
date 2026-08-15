@@ -510,6 +510,101 @@ test("workspace endpoints scope files and history to one worktree revision", asy
   }
 });
 
+test("main workspace history expands merged worktree sessions and keeps lineage while traversing", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-lineage-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const cache = path.join(root, "cache");
+  const runtime = path.join(root, "runtime");
+  const mainRoot = path.join(root, "main");
+  const featureRoot = path.join(root, "feature");
+  await mkdir(mainRoot, { recursive: true });
+  await mkdir(featureRoot, { recursive: true });
+
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  const previousRuntime = process.env.MDVIEW_RUNTIME_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  process.env.MDVIEW_RUNTIME_DIR = runtime;
+  try {
+    const { registerWorkspaceRevision, workspaceDocumentId, workspaceHistoryId } = await import(`../src/workspace-history.mjs?lineage-server=${Date.now()}`);
+    const commonMeta = { repo: "repo", repositoryId: "a".repeat(24) };
+    const feature1 = await registerWorkspaceRevision({
+      root: featureRoot,
+      renderedAt: "2026-08-16T10:00:00.000Z",
+      source: "hook",
+      sessionId: "feature-session-1",
+      turnId: "feature-turn-1",
+      meta: { ...commonMeta, worktree: "feature/docs", branch: "feature/docs", head: "bbbbbbb" },
+      files: { "README.md": "b".repeat(64) },
+      changes: [],
+    });
+    const feature2 = await registerWorkspaceRevision({
+      root: featureRoot,
+      renderedAt: "2026-08-16T11:00:00.000Z",
+      source: "hook",
+      sessionId: "feature-session-2",
+      turnId: "feature-turn-2",
+      meta: { ...commonMeta, worktree: "feature/docs", branch: "feature/docs", head: "ccccccc" },
+      files: { "README.md": "c".repeat(64) },
+      changes: [],
+    });
+    const main1 = await registerWorkspaceRevision({
+      root: mainRoot,
+      renderedAt: "2026-08-16T09:00:00.000Z",
+      source: "hook",
+      sessionId: "main-session",
+      turnId: "main-turn-1",
+      meta: { ...commonMeta, worktree: "repo", branch: "main", head: "aaaaaaa" },
+      files: { "README.md": "a".repeat(64) },
+      changes: [],
+    });
+    const main2 = await registerWorkspaceRevision({
+      root: mainRoot,
+      renderedAt: "2026-08-16T12:00:00.000Z",
+      source: "hook",
+      sessionId: "merge-session",
+      turnId: "main-turn-2",
+      meta: { ...commonMeta, worktree: "repo", branch: "main", head: "ddddddd" },
+      files: { "README.md": "c".repeat(64) },
+      changes: [],
+      mergeSources: [{
+        workspaceId: workspaceHistoryId(featureRoot),
+        throughRevisionId: feature2.revision.id,
+        reason: "git-ancestry",
+      }],
+    });
+
+    const { startServer } = await import(`../src/server.mjs?lineage-server=${Date.now()}`);
+    const server = await startServer({ port: 0 });
+    context.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const mainDocumentId = workspaceDocumentId(mainRoot, "README.md");
+    const mainDetails = await fetch(`${origin}/__mdview/workspaces/${main2.manifest.workspaceId}?revision=${main2.revision.id}&document=${mainDocumentId}`).then((response) => response.json());
+    assert.deepEqual(mainDetails.revisions.map((revision) => revision.sessionId), [
+      "main-session",
+      "feature-session-1",
+      "feature-session-2",
+      "merge-session",
+    ]);
+    assert.deepEqual(mainDetails.revisions.map((revision) => revision.imported), [false, true, true, false]);
+    assert.deepEqual(mainDetails.revisions.map((revision) => revision.lineageReason), [null, "git-ancestry", "git-ancestry", null]);
+    const importedHref = mainDetails.revisions[1].href;
+    assert.match(importedHref, new RegExp(`^/__mdview/workspaces/${feature1.manifest.workspaceId}/revisions/${feature1.revision.id}/files/[a-f0-9]{24}[?]lineage=${main2.manifest.workspaceId}$`));
+
+    const importedUrl = new URL(importedHref, origin);
+    const sourceDocumentId = importedUrl.pathname.split("/").at(-1);
+    const sourceDetails = await fetch(`${origin}/__mdview/workspaces/${feature1.manifest.workspaceId}?revision=${feature1.revision.id}&document=${sourceDocumentId}&lineage=${main2.manifest.workspaceId}`).then((response) => response.json());
+    assert.deepEqual(sourceDetails.revisions.map((revision) => revision.sessionId), mainDetails.revisions.map((revision) => revision.sessionId));
+    assert.ok(sourceDetails.files.every((file) => file.href.endsWith(`?lineage=${main2.manifest.workspaceId}`)));
+    assert.equal(sourceDetails.lineageWorkspaceId, main2.manifest.workspaceId);
+    assert.equal(mainDetails.revisions[0].id, main1.revision.id);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+    if (previousRuntime === undefined) delete process.env.MDVIEW_RUNTIME_DIR;
+    else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
+  }
+});
+
 test("only a verified mdview daemon command is eligible for protocol upgrade restart", async () => {
   const { isMdviewDaemonCommand, parseMdviewHealth } = await import(`../src/server.mjs?daemon=${Date.now()}`);
   assert.equal(isMdviewDaemonCommand("/opt/homebrew/bin/node /repo/mdview/src/cli.mjs serve --daemon"), true);

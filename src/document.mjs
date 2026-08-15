@@ -1,7 +1,7 @@
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { branchDisplay, worktreeLabel } from "./codex-context.mjs";
+import { branchDisplay, resolveGitRepositoryContext, worktreeLabel } from "./codex-context.mjs";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -208,12 +208,13 @@ export async function documentMeta(filePath, options = {}) {
   const absolutePath = path.resolve(filePath);
   const fileDir = path.dirname(absolutePath);
   const repoRoot = await git(["rev-parse", "--show-toplevel"], fileDir);
-  const [branch, head] = repoRoot
+  const [branch, head, gitContext] = repoRoot
     ? await Promise.all([
       git(["branch", "--show-current"], repoRoot),
       git(["rev-parse", "--short", "HEAD"], repoRoot),
+      resolveGitRepositoryContext(repoRoot),
     ])
-    : ["", ""];
+    : ["", "", null];
   const relativePath = repoRoot ? path.relative(repoRoot, absolutePath) : path.basename(absolutePath);
   const repo = repoRoot ? path.basename(repoRoot) : path.basename(fileDir);
   const changedLines = options.includeChanges === false
@@ -226,6 +227,9 @@ export async function documentMeta(filePath, options = {}) {
     branch: branch || "detached",
     branchDisplay: branchDisplay(branch, head),
     head: head || null,
+    repositoryId: gitContext?.repositoryId || null,
+    commit: gitContext?.commit || null,
+    parents: gitContext?.parents || [],
     worktree: worktreeLabel(repoRoot || fileDir),
     relativePath,
     displayPath: `${repo} / ${branch || "detached"} / ${relativePath}`,

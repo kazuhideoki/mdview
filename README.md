@@ -48,6 +48,8 @@ Reader はワークツリーを閲覧の単位にします。左サイドバー�
 
 描画キャッシュは `~/Library/Caches/mdview/v1`、履歴の正本は `~/Library/Application Support/mdview/history`、hook 状態は `~/Library/Application Support/mdview/hooks`、ログは `~/Library/Logs/mdview` に保存します。履歴には内容ハッシュで共有するMarkdownスナップショットに加え、作業時点ごとのワークツリー内ファイル構成を保存します。サイドバーから未描画のMarkdownを選んだときだけ、そのスナップショットを遅延描画します。このため、過去リビジョンの内容は固定したまま、Reader の機能とMarkdownの表示仕様には現在起動しているmdviewが反映されます。生成済みHTMLは互換用のfallbackを兼ねた削除可能なキャッシュであり、正本ではありません。
 
+履歴はGitチェックアウトのルートごとに保存するため、main workspaceもlinked worktreeもそれぞれ独立した対象です。同じルートではCodexセッションをまたいで作業が積み上がります。別worktreeの変更がmainなどへ取り込まれた場合は、Markdownスナップショットの整合を必須にし、Git ancestryでマージ元を確認または曖昧性を解消します。Git ancestryが取得できない場合に限り、一意に特定できるMarkdown差分一致を推定マージ元として使います。マージ元の履歴はコピーせず、main側のマージ時点から参照します。Readerでは `P` でマージ元worktreeの各セッションへ入り、`N` でmain側のマージ結果へ戻れます。複数回同じworktreeを取り込んでも、すでに表示したリビジョンは重複しません。参照先が壊れている、消えている、または別repositoryと判定された場合は、その履歴だけを除外して未読込件数を表示します。
+
 配信サーバーは `127.0.0.1:4320` のみで待ち受け、履歴APIはナビゲーション用メタデータだけを返します。Markdown スナップショット自体は配信しません。health 応答にはプロトコル版とruntime sourceから計算したbuild IDを含め、`mdview`起動時に現在のCLIと一致しないdaemonだけを安全に再起動します。
 
 Hook から描画した版では、保存済みのセッションIDに完全一致する現在のセッション名だけを読み取ります。これは版の作成時点に固定した履歴ラベルではありません。Codex の `session_index.jsonl` にある最新の `thread_name` を優先し、見つからない場合だけローカル状態DBへフォールバックします。Readerを開くたびに再解決するため、後から変更した名前や、保存HTMLへfallbackした場合にも現在名を反映します。同じワークツリーの別セッションを推測して表示することはありません。手動描画ではセッション名を表示しません。detached HEAD の場合は、ブランチ欄に短縮コミットSHAを併記します。

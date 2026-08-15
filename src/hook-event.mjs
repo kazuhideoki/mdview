@@ -17,7 +17,8 @@ import path from "node:path";
 import process from "node:process";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { worktreeLabel } from "./codex-context.mjs";
+import { resolveGitRepositoryContext, worktreeLabel } from "./codex-context.mjs";
+import { discoverMergeSources } from "./repository-lineage.mjs";
 import { storeHistorySnapshot } from "./history.mjs";
 import {
   readWorkspaceHistoryForRoot,
@@ -111,15 +112,18 @@ async function gitValue(root, args) {
 }
 
 async function workspaceMeta(root) {
-  const [branch, head] = await Promise.all([
+  const [branch, gitContext] = await Promise.all([
     gitValue(root, ["branch", "--show-current"]),
-    gitValue(root, ["rev-parse", "--short", "HEAD"]),
+    resolveGitRepositoryContext(root),
   ]);
   return {
     repo: path.basename(root),
     worktree: worktreeLabel(root) || path.basename(root),
     branch: branch || "detached",
-    head,
+    head: gitContext?.commit?.slice(0, 7) || null,
+    repositoryId: gitContext?.repositoryId || null,
+    commit: gitContext?.commit || null,
+    parents: gitContext?.parents || [],
   };
 }
 
@@ -354,7 +358,7 @@ export async function processHookEvent(payload, options = {}) {
       path.join(previous?.root || snapshot.root, relativePath),
     );
     const renderedAt = new Date(now).toISOString();
-    const workspaceChanges = [
+    const turnChanges = [
       ...differences.changed.map((relativePath) => ({
         path: portableRelative(relativePath),
         beforeContentHash: previous?.files?.[relativePath] ?? null,
@@ -366,11 +370,22 @@ export async function processHookEvent(payload, options = {}) {
         contentHash: null,
       })),
     ];
-    const existingWorkspace = previous && workspaceChanges.length === 0
-      ? await readWorkspaceHistoryForRoot(snapshot.root, historyOptions)
-      : null;
+    const existingWorkspace = await readWorkspaceHistoryForRoot(snapshot.root, historyOptions);
     const existingRevision = existingWorkspace?.revisions.at(-1);
-    const workspaceRevision = existingRevision && workspaceFilesEqual(existingRevision.files, snapshot.files)
+    const meta = await workspaceMeta(snapshot.root);
+    const filesEqual = existingRevision && workspaceFilesEqual(existingRevision.files, snapshot.files);
+    const gitChanged = existingRevision && gitRevisionChanged(existingRevision.meta, meta);
+    let mergeSources = [];
+    if (!filesEqual || gitChanged) {
+      mergeSources = await discoverMergeSources({
+        destination: existingWorkspace,
+        destinationRoot: snapshot.root,
+        currentFiles: snapshot.files,
+        currentMeta: meta,
+        renderedAt,
+      }, historyOptions);
+    }
+    const workspaceRevision = filesEqual && mergeSources.length === 0
       ? { manifest: existingWorkspace, revision: existingRevision, added: false }
       : await registerWorkspaceRevision({
         root: snapshot.root,
@@ -378,9 +393,10 @@ export async function processHookEvent(payload, options = {}) {
         source: "hook",
         sessionId: payload.session_id,
         turnId: payload.turn_id,
-        meta: await workspaceMeta(snapshot.root),
+        meta,
         files: snapshot.files,
-        changes: workspaceChanges,
+        changes: existingRevision ? compareWorkspaceFiles(existingRevision.files, snapshot.files) : turnChanges,
+        mergeSources,
       }, historyOptions);
     if (typeof options.beforeStateAdvance === "function") await options.beforeStateAdvance(workspaceRevision, payload);
     await atomicWriteJson(filePath, stateRecord(snapshot, now, previous));
@@ -404,6 +420,23 @@ export async function processHookEvent(payload, options = {}) {
     }
     return result;
   });
+}
+
+function compareWorkspaceFiles(previousFiles, currentFiles) {
+  const paths = new Set([...Object.keys(previousFiles), ...Object.keys(currentFiles)]);
+  return [...paths]
+    .filter((relativePath) => previousFiles[relativePath] !== currentFiles[relativePath])
+    .map((relativePath) => ({
+      path: portableRelative(relativePath),
+      beforeContentHash: previousFiles[relativePath] ?? null,
+      contentHash: currentFiles[relativePath] ?? null,
+    }));
+}
+
+function gitRevisionChanged(previousMeta, currentMeta) {
+  const previousCommit = previousMeta?.commit || previousMeta?.head || null;
+  const currentCommit = currentMeta?.commit || currentMeta?.head || null;
+  return Boolean(previousCommit && currentCommit && previousCommit !== currentCommit);
 }
 
 async function withHookStateLock(filePath, operation) {

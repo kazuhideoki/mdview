@@ -16,7 +16,7 @@ export function workspaceHistoryId(root) {
   return createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 24);
 }
 
-export function workspaceRevisionId({ workspaceId, renderedAt, sessionId, turnId, source, meta, files, changes }) {
+export function workspaceRevisionId({ workspaceId, renderedAt, sessionId, turnId, source, meta, files, changes, mergeSources }) {
   validateId(workspaceId);
   if (!Number.isFinite(Date.parse(renderedAt))) throw new TypeError("Workspace revision requires renderedAt.");
   return createHash("sha256")
@@ -28,6 +28,7 @@ export function workspaceRevisionId({ workspaceId, renderedAt, sessionId, turnId
       meta: meta || null,
       files: files || {},
       changes: changes || [],
+      mergeSources: mergeSources || [],
     }))
     .digest("hex")
     .slice(0, 24);
@@ -152,6 +153,7 @@ function normalizeRevisionInput(input) {
   }
   const files = normalizeFiles(input.files);
   const changes = normalizeChanges(input.changes ?? [], files);
+  const mergeSources = normalizeMergeSources(input.mergeSources ?? [], input.workspaceId);
   const meta = normalizeMeta(input.meta, input.root);
   const id = input.id || workspaceRevisionId({
     workspaceId: input.workspaceId,
@@ -162,6 +164,7 @@ function normalizeRevisionInput(input) {
     meta,
     files,
     changes,
+    mergeSources,
   });
   validateId(id);
   return {
@@ -173,6 +176,7 @@ function normalizeRevisionInput(input) {
     meta,
     files,
     changes,
+    mergeSources,
   };
 }
 
@@ -231,12 +235,40 @@ function normalizeChanges(value, files) {
 
 function normalizeMeta(value, root) {
   const meta = value && typeof value === "object" ? value : {};
-  return {
+  const normalized = {
     repo: typeof meta.repo === "string" && meta.repo ? meta.repo : path.basename(root),
     worktree: typeof meta.worktree === "string" && meta.worktree ? meta.worktree : path.basename(root),
     branch: typeof meta.branch === "string" && meta.branch ? meta.branch : "detached",
     head: typeof meta.head === "string" && /^[a-f0-9]+$/i.test(meta.head) ? meta.head : null,
   };
+  if (typeof meta.repositoryId === "string" && ID_PATTERN.test(meta.repositoryId)) normalized.repositoryId = meta.repositoryId;
+  if (typeof meta.commit === "string" && /^[a-f0-9]{40}$/i.test(meta.commit)) normalized.commit = meta.commit;
+  if (Array.isArray(meta.parents)) {
+    normalized.parents = meta.parents.filter((parent) => typeof parent === "string" && /^[a-f0-9]{40}$/i.test(parent));
+  }
+  return normalized;
+}
+
+function normalizeMergeSources(value, destinationWorkspaceId) {
+  if (!Array.isArray(value)) throw new TypeError("Workspace merge sources must be an array.");
+  const sources = value.map((source) => {
+    if (!source || typeof source !== "object") throw new TypeError("Workspace merge source must be an object.");
+    validateId(source.workspaceId);
+    validateId(source.throughRevisionId);
+    if (source.workspaceId === destinationWorkspaceId) throw new TypeError("Workspace cannot merge its own history.");
+    if (!["git-ancestry", "snapshot-match"].includes(source.reason)) {
+      throw new TypeError("Workspace merge source reason is invalid.");
+    }
+    return {
+      workspaceId: source.workspaceId,
+      throughRevisionId: source.throughRevisionId,
+      reason: source.reason,
+      sourceWorktree: typeof source.sourceWorktree === "string" && source.sourceWorktree ? source.sourceWorktree : null,
+      sourceBranch: typeof source.sourceBranch === "string" && source.sourceBranch ? source.sourceBranch : null,
+      sourceHead: typeof source.sourceHead === "string" && /^[a-f0-9]+$/i.test(source.sourceHead) ? source.sourceHead : null,
+    };
+  });
+  return sources.sort((left, right) => left.workspaceId.localeCompare(right.workspaceId));
 }
 
 function validateRelativePath(value) {
@@ -273,7 +305,8 @@ function revisionsEquivalent(left, right) {
     && left.turnId === right.turnId
     && JSON.stringify(left.meta) === JSON.stringify(right.meta)
     && workspaceFilesEqual(left.files, right.files)
-    && JSON.stringify(left.changes) === JSON.stringify(right.changes);
+    && JSON.stringify(left.changes) === JSON.stringify(right.changes)
+    && JSON.stringify(left.mergeSources) === JSON.stringify(right.mergeSources);
 }
 
 function compareRevisions(left, right) {
