@@ -12,6 +12,7 @@ import { findHistoryRevisionByHref, readDocumentHistory, restoreHistoryCacheArti
 import { documentMeta } from "./document.mjs";
 import { cacheRoot, logPath, runtimeRoot, serverPort } from "./paths.mjs";
 import { renderHistoryRevision, renderMarkdownFile, renderWorkspaceRevision } from "./renderer.mjs";
+import { readWorkspaceLineage } from "./repository-lineage.mjs";
 import { resolveCodexSessionTitle } from "./codex-context.mjs";
 import {
   readWorkspaceHistories,
@@ -290,17 +291,22 @@ async function followMarkdownLink(requestUrl, response) {
   const fragment = requestUrl.searchParams.get("fragment") || "";
   const workspaceId = requestUrl.searchParams.get("workspace");
   const workspaceRevisionId = requestUrl.searchParams.get("revision");
+  const lineageWorkspaceId = requestUrl.searchParams.get("lineage");
   if (workspaceId !== null || workspaceRevisionId !== null) {
     if (!/^[a-f0-9]{24}$/.test(workspaceId || "") || !/^[a-f0-9]{24}$/.test(workspaceRevisionId || "") || !target) {
+      return respond(response, 404, "Not Found");
+    }
+    if (lineageWorkspaceId !== null && !/^[a-f0-9]{24}$/.test(lineageWorkspaceId)) {
       return respond(response, 404, "Not Found");
     }
     const workspace = await readWorkspaceHistory(workspaceId);
     const destination = workspaceMarkdownDestination(workspace, workspaceRevisionId, sourceId, target);
     if (!destination) return respond(response, 404, "Not Found");
     const location = new URL(destination, "http://mdview.local");
+    if (lineageWorkspaceId) location.searchParams.set("lineage", lineageWorkspaceId);
     if (fragment) location.hash = fragment;
     response.writeHead(302, {
-      location: `${location.pathname}${location.hash}`,
+      location: `${location.pathname}${location.search}${location.hash}`,
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
     });
@@ -504,25 +510,44 @@ async function workspaceDetails(request, response, requestUrl, workspaceId, opti
   if (!workspace.root || workspace.revisions.length === 0) return respond(response, 404, "Not Found");
   const requestedRevisionId = requestUrl.searchParams.get("revision") || workspace.revisions.at(-1).id;
   const currentDocumentId = requestUrl.searchParams.get("document");
+  const requestedLineageId = requestUrl.searchParams.get("lineage");
   if (!/^[a-f0-9]{24}$/.test(requestedRevisionId)) return respond(response, 400, "Bad Request");
   if (currentDocumentId !== null && !/^[a-f0-9]{24}$/.test(currentDocumentId)) return respond(response, 400, "Bad Request");
+  if (requestedLineageId !== null && !/^[a-f0-9]{24}$/.test(requestedLineageId)) return respond(response, 400, "Bad Request");
   const revision = workspace.revisions.find((candidate) => candidate.id === requestedRevisionId);
   if (!revision) return respond(response, 404, "Not Found");
+  const lineageWorkspaceId = requestedLineageId || workspaceId;
+  const lineage = await readWorkspaceLineage(lineageWorkspaceId);
+  const currentNode = lineage.nodes.find((candidate) => (
+    candidate.workspaceId === workspaceId && candidate.revision.id === requestedRevisionId
+  ));
+  if (!currentNode) return respond(response, 404, "Not Found");
   const resolveSessionTitle = options.resolveSessionTitle || resolveCodexSessionTitle;
   const sessionTitle = revision.sessionId ? await resolveSessionTitle(revision.sessionId) : null;
-  const files = projectWorkspaceFiles(workspace, revision);
-  const revisions = workspace.revisions.map((candidate) => ({
-    id: candidate.id,
-    renderedAt: candidate.renderedAt,
-    source: candidate.source,
-    sessionId: candidate.sessionId,
-    turnId: candidate.turnId,
-    href: workspaceRevisionHref(workspace, candidate, currentDocumentId),
-    ...(candidate.id === revision.id ? { sessionTitle } : {}),
+  const currentFile = currentDocumentId ? workspaceFileAtRevision(workspace, revision.id, currentDocumentId) : null;
+  const preferredRelativePath = currentFile?.relativePath || null;
+  const expandedLineage = lineage.nodes.some((candidate) => candidate.imported);
+  const preserveLineage = requestedLineageId !== null ? lineageWorkspaceId : null;
+  const files = projectWorkspaceFiles(workspace, revision, preserveLineage);
+  const revisions = lineage.nodes.map((candidate) => ({
+    id: candidate.revision.id,
+    workspaceId: candidate.workspaceId,
+    renderedAt: candidate.revision.renderedAt,
+    source: candidate.revision.source,
+    sessionId: candidate.revision.sessionId,
+    turnId: candidate.revision.turnId,
+    worktree: candidate.revision.meta.worktree,
+    branch: candidate.revision.meta.branch,
+    imported: candidate.imported,
+    lineageReason: candidate.lineageReason,
+    href: lineageRevisionHref(candidate, preferredRelativePath, expandedLineage ? lineageWorkspaceId : null),
+    ...(candidate.workspaceId === workspaceId && candidate.revision.id === revision.id ? { sessionTitle } : {}),
   }));
   const body = `${JSON.stringify({
     workspaceId,
     revisionId: revision.id,
+    lineageWorkspaceId,
+    lineageWarnings: lineage.warnings,
     meta: revision.meta,
     files,
     revisions,
@@ -548,7 +573,7 @@ function projectWorkspaceSummary(workspace) {
   };
 }
 
-function projectWorkspaceFiles(workspace, revision) {
+function projectWorkspaceFiles(workspace, revision, lineageWorkspaceId = null) {
   const paths = new Set(Object.keys(revision.files));
   for (const change of revision.changes) {
     if (change.kind === "deleted") paths.add(change.path);
@@ -561,9 +586,34 @@ function projectWorkspaceFiles(workspace, revision) {
       title: path.basename(relativePath).replace(/\.(?:md|markdown)$/i, ""),
       relativePath,
       changeKind: change?.kind || null,
-      href: workspaceDocumentHref(workspace.workspaceId, revision.id, documentId),
+      href: appendLineage(workspaceDocumentHref(workspace.workspaceId, revision.id, documentId), lineageWorkspaceId),
     };
   });
+}
+
+function lineageRevisionHref(node, preferredRelativePath, lineageWorkspaceId) {
+  const preferred = preferredRelativePath && node.revision.files[preferredRelativePath]
+    ? preferredRelativePath
+    : null;
+  const relativePath = preferred
+    || Object.keys(node.revision.files).sort((left, right) => left.localeCompare(right))[0]
+    || node.revision.changes.find((change) => change.kind === "deleted")?.path;
+  if (!relativePath) return null;
+  return appendLineage(
+    workspaceDocumentHref(
+      node.workspaceId,
+      node.revision.id,
+      workspaceDocumentId(node.workspace.root, relativePath),
+    ),
+    lineageWorkspaceId,
+  );
+}
+
+function appendLineage(href, lineageWorkspaceId) {
+  if (!lineageWorkspaceId) return href;
+  const url = new URL(href, "http://mdview.local");
+  url.searchParams.set("lineage", lineageWorkspaceId);
+  return `${url.pathname}${url.search}`;
 }
 
 function workspaceRevisionHref(workspace, revision, preferredDocumentId) {

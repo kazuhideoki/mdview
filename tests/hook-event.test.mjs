@@ -105,6 +105,35 @@ test("a Stop without a prompt establishes a baseline without reporting every doc
   assert.equal(await readHistorySnapshot(workspaceHistory.revisions[0].files["README.md"], { root: historyRoot }), "existing\n");
 });
 
+test("a new session records changes that arrived before its prompt against the prior workspace revision", async (t) => {
+  const { cwd, stateDir, historyRoot } = await fixture(t);
+  const markdownPath = path.join(cwd, "README.md");
+  await writeFile(markdownPath, "before\n");
+  await processHookEvent(payload(cwd, "UserPromptSubmit"), { stateDir, historyRoot });
+  await writeFile(markdownPath, "first session\n");
+  await processHookEvent(payload(cwd, "Stop"), { stateDir, historyRoot, now: Date.parse("2026-08-16T10:00:00Z") });
+
+  await writeFile(markdownPath, "merged before next session\n");
+  const nextPrompt = payload(cwd, "UserPromptSubmit", { session_id: "session-b", turn_id: "turn-2" });
+  await processHookEvent(nextPrompt, { stateDir, historyRoot });
+  const stop = await processHookEvent({ ...nextPrompt, hook_event_name: "Stop" }, {
+    stateDir,
+    historyRoot,
+    now: Date.parse("2026-08-16T11:00:00Z"),
+  });
+
+  assert.deepEqual(stop.changedFiles, []);
+  const workspace = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
+  assert.equal(workspace.revisions.length, 2);
+  assert.equal(workspace.revisions[1].sessionId, "session-b");
+  assert.deepEqual(workspace.revisions[1].changes, [{
+    path: "README.md",
+    kind: "modified",
+    beforeContentHash: createHash("sha256").update("first session\n").digest("hex"),
+    contentHash: createHash("sha256").update("merged before next session\n").digest("hex"),
+  }]);
+});
+
 test("an interrupted Stop retries without losing its workspace revision or changes", async (t) => {
   const { cwd, stateDir, historyRoot } = await fixture(t);
   const markdownPath = path.join(cwd, "README.md");

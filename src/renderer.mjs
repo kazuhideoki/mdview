@@ -24,6 +24,7 @@ import {
 } from "./history.mjs";
 import { cacheRoot, catalogRoot, documentOutputPath, documentUrl } from "./paths.mjs";
 import { renderDocument } from "./render-document.mjs";
+import { discoverMergeSources } from "./repository-lineage.mjs";
 import { pageTemplate } from "./template.mjs";
 import { branchDisplay, resolveCodexSessionTitle } from "./codex-context.mjs";
 import {
@@ -340,7 +341,29 @@ async function captureManualWorkspaceRevision({ root, relativePath, markdown, co
     await storeHistorySnapshot(contents, { ...historyOptions, contentHash: expectedHash });
   }
   const previous = workspace.revisions.at(-1);
-  if (previous && workspaceFilesEqual(previous.files, snapshot.files)) {
+  const revisionMeta = {
+    repo: meta.repo,
+    worktree: meta.worktree,
+    branch: meta.branch,
+    head: meta.head,
+    repositoryId: meta.repositoryId,
+    commit: meta.commit,
+    parents: meta.parents,
+  };
+  const filesEqual = previous && workspaceFilesEqual(previous.files, snapshot.files);
+  const previousCommit = previous?.meta?.commit || previous?.meta?.head || null;
+  const currentCommit = revisionMeta.commit || revisionMeta.head || null;
+  const gitChanged = Boolean(previousCommit && currentCommit && previousCommit !== currentCommit);
+  const mergeSources = !filesEqual || gitChanged
+    ? await discoverMergeSources({
+      destination: workspace,
+      destinationRoot: snapshot.root,
+      currentFiles: snapshot.files,
+      currentMeta: revisionMeta,
+      renderedAt: catalogContext.renderedAt,
+    }, historyOptions)
+    : [];
+  if (filesEqual && mergeSources.length === 0) {
     return { manifest: workspace, revision: previous, added: false };
   }
   return registerWorkspaceRevision({
@@ -349,14 +372,10 @@ async function captureManualWorkspaceRevision({ root, relativePath, markdown, co
     source: catalogContext.source || "manual",
     sessionId: catalogContext.sessionId ?? null,
     turnId: catalogContext.turnId ?? null,
-    meta: {
-      repo: meta.repo,
-      worktree: meta.worktree,
-      branch: meta.branch,
-      head: meta.head,
-    },
+    meta: revisionMeta,
     files: snapshot.files,
     changes: previous ? workspaceChanges(previous.files, snapshot.files) : [],
+    mergeSources,
   }, historyOptions);
 }
 

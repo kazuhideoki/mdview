@@ -6,6 +6,9 @@ const documentId = app?.dataset.documentId || "";
 const revisionId = app?.dataset.revisionId || "";
 const workspaceId = app?.dataset.workspaceId || "";
 const workspaceRevisionId = app?.dataset.workspaceRevisionId || "";
+const lineageWorkspaceId = /^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get("lineage") || "")
+  ? new URLSearchParams(location.search).get("lineage")
+  : "";
 const storageKey = documentId ? `mdview:document:${documentId}` : `mdview:${location.pathname}`;
 const searchOverlay = document.querySelector("[data-search-overlay]");
 const searchInput = document.querySelector("#mdv-search-input");
@@ -99,6 +102,19 @@ workspacePaletteResults?.addEventListener("click", (event) => {
   if (!option) return;
   setActiveWorkspaceResult(Number(option.dataset.resultIndex), false);
   openSelectedWorkspace();
+});
+document.addEventListener("click", (event) => {
+  if (!lineageWorkspaceId || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  const anchor = event.target.closest?.("a[href]");
+  if (!anchor) return;
+  const destination = new URL(anchor.href, location.origin);
+  if (destination.origin !== location.origin || (
+    !destination.pathname.startsWith("/__mdview/follow/")
+    && !destination.pathname.startsWith("/__mdview/workspaces/")
+  )) return;
+  event.preventDefault();
+  destination.searchParams.set("lineage", lineageWorkspaceId);
+  location.assign(`${destination.pathname}${destination.search}${destination.hash}`);
 });
 
 if (matchMedia("(max-width: 760px)").matches) app?.classList.add("toc-hidden");
@@ -698,8 +714,14 @@ function safeReaderHref(value) {
   try {
     const url = new URL(value, location.origin);
     const workspaceDocument = /^\/__mdview\/workspaces\/[a-f0-9]{24}\/revisions\/[a-f0-9]{24}\/files\/[a-f0-9]{24}$/.test(url.pathname);
-    if (url.origin !== location.origin || url.search || url.hash || (!url.pathname.startsWith("/documents/") && !workspaceDocument)) return "";
-    return url.pathname;
+    const searchKeys = [...url.searchParams.keys()];
+    const safeLineage = searchKeys.length === 0 || (
+      searchKeys.length === 1
+      && searchKeys[0] === "lineage"
+      && /^[a-f0-9]{24}$/.test(url.searchParams.get("lineage") || "")
+    );
+    if (url.origin !== location.origin || !safeLineage || url.hash || (!url.pathname.startsWith("/documents/") && !workspaceDocument)) return "";
+    return `${url.pathname}${url.search}`;
   } catch {
     return "";
   }
@@ -741,6 +763,7 @@ async function ensureWorkspaceDetails(signal) {
   if (workspaceState.loading) return workspaceState.loading;
   const params = new URLSearchParams({ revision: workspaceRevisionId });
   if (documentId) params.set("document", documentId);
+  if (lineageWorkspaceId) params.set("lineage", lineageWorkspaceId);
   const operation = fetch(`/__mdview/workspaces/${encodeURIComponent(workspaceId)}?${params}`, {
     headers: { accept: "application/json" },
     cache: "no-store",
@@ -913,6 +936,11 @@ function normalizeHistory(payload) {
       sessionId: stringValue(value.sessionId),
       turnId: stringValue(value.turnId),
       sessionTitle: stringValue(value.sessionTitle),
+      workspaceId: stringValue(value.workspaceId),
+      worktree: stringValue(value.worktree),
+      branch: stringValue(value.branch),
+      imported: value.imported === true,
+      lineageReason: value.lineageReason === "snapshot-match" ? "snapshot-match" : value.lineageReason === "git-ancestry" ? "git-ancestry" : "",
     };
   }).filter(Boolean);
 }
@@ -940,6 +968,14 @@ function refreshHistoryCursor() {
   time.dateTime = current.renderedAt;
   time.textContent = formatHistoryTimestamp(current.renderedAt);
   detail.append(document.createTextNode(" · "), time, document.createTextNode(` · ${source}`));
+  if (current.imported) {
+    const provenanceLabel = current.lineageReason === "snapshot-match" ? "推定マージ元" : "マージ元";
+    detail.append(document.createTextNode(` · ${provenanceLabel} ${current.worktree || "worktree"}`));
+  }
+  const warningCount = Array.isArray(workspaceState.payload?.lineageWarnings)
+    ? workspaceState.payload.lineageWarnings.length
+    : 0;
+  if (warningCount > 0) detail.append(document.createTextNode(` · マージ元履歴 ${warningCount}件未読込`));
   status.append(position, detail);
   refreshSessionTitle(status, current.sessionTitle);
 }
