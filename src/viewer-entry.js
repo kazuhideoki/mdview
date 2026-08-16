@@ -172,11 +172,6 @@ async function runAction(button) {
     case "next-revision":
       navigateRevision(1);
       break;
-    case "mark-read":
-      app.classList.toggle("is-read");
-      localStorage.setItem(`${storageKey}:read`, String(app.classList.contains("is-read")));
-      showToast(app.classList.contains("is-read") ? "変更を既読にしました" : "未読に戻しました");
-      break;
     case "toggle-code": {
       const figure = button.closest(".mdv-code");
       figure.classList.toggle("collapsed");
@@ -1087,7 +1082,6 @@ function restorePreferences() {
       applySetting(input.dataset.setting, saved, false);
     }
   }
-  app.classList.toggle("is-read", localStorage.getItem(`${storageKey}:read`) === "true");
 }
 
 function observeHeadings() {
