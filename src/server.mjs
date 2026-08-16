@@ -569,6 +569,7 @@ function projectWorkspaceSummary(workspace) {
     head: revision.meta.head,
     revisionId: revision.id,
     renderedAt: revision.renderedAt,
+    updatedAt: revision.renderedAt,
     href: workspaceRevisionHref(workspace, revision, null),
   };
 }
@@ -578,7 +579,7 @@ function projectWorkspaceFiles(workspace, revision, lineageWorkspaceId = null) {
   for (const change of revision.changes) {
     if (change.kind === "deleted") paths.add(change.path);
   }
-  return [...paths].sort((left, right) => left.localeCompare(right)).map((relativePath) => {
+  return [...paths].map((relativePath) => {
     const documentId = workspaceDocumentId(workspace.root, relativePath);
     const change = revision.changes.find((candidate) => candidate.path === relativePath) || null;
     return {
@@ -586,9 +587,25 @@ function projectWorkspaceFiles(workspace, revision, lineageWorkspaceId = null) {
       title: path.basename(relativePath).replace(/\.(?:md|markdown)$/i, ""),
       relativePath,
       changeKind: change?.kind || null,
+      updatedAt: workspaceFileUpdatedAt(workspace, revision, relativePath),
       href: appendLineage(workspaceDocumentHref(workspace.workspaceId, revision.id, documentId), lineageWorkspaceId),
     };
-  });
+  }).sort((left, right) => (
+    Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+    || left.relativePath.localeCompare(right.relativePath)
+  ));
+}
+
+function workspaceFileUpdatedAt(workspace, revision, relativePath) {
+  const revisionIndex = workspace.revisions.findIndex((candidate) => candidate.id === revision.id);
+  for (let index = revisionIndex; index >= 0; index -= 1) {
+    const candidate = workspace.revisions[index];
+    if (candidate.changes.some((change) => change.path === relativePath)) return candidate.renderedAt;
+    const contentHash = candidate.files[relativePath] || null;
+    const previousHash = index > 0 ? workspace.revisions[index - 1].files[relativePath] || null : null;
+    if (contentHash !== previousHash || (index === 0 && contentHash)) return candidate.renderedAt;
+  }
+  return revision.renderedAt;
 }
 
 function lineageRevisionHref(node, preferredRelativePath, lineageWorkspaceId) {

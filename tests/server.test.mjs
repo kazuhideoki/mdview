@@ -471,7 +471,11 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     assert.equal(summaries.length, 1);
     assert.equal(summaries[0].worktree, "feature/docs");
     const details = await fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`).then((response) => response.json());
-    assert.deepEqual(details.files.map((file) => file.relativePath), ["first.md", "second.md"]);
+    assert.deepEqual(details.files.map((file) => file.relativePath), ["second.md", "first.md"]);
+    assert.deepEqual(details.files.map((file) => file.updatedAt), [
+      "2026-08-15T11:00:00.000Z",
+      "2026-08-15T10:00:00.000Z",
+    ]);
     assert.equal(details.revisions.length, 2);
     assert.ok(details.revisions.every((revision) => revision.href.includes(`/files/${secondId}`)));
 
