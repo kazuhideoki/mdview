@@ -91,10 +91,10 @@
   .mdv-workspace-file strong { font-size: 13px; font-weight: 600; }
   .mdv-workspace-file > span { color: var(--mdv-faint); font: 10.5px/1.3 var(--mdv-font-mono); }
   .mdv-workspace-file-status { position: absolute; top: 8px; right: 7px; display: none; color: var(--mdv-modified); font-size: 9px; font-style: normal; font-weight: 650; }
-  .mdv-app:not([data-view="changes"]) .mdv-workspace-file.is-deleted { display: none; }
-  .mdv-app[data-view="changes"] .mdv-workspace-file-status { display: block; }
-  .mdv-app[data-view="changes"] .mdv-workspace-file[data-change-kind="added"] .mdv-workspace-file-status { color: var(--mdv-added); }
-  .mdv-app[data-view="changes"] .mdv-workspace-file[data-change-kind="deleted"] .mdv-workspace-file-status { color: var(--mdv-removed); }
+  .mdv-app[data-view="raw"] .mdv-workspace-file.is-deleted { display: none; }
+  .mdv-app:is([data-view="read"], [data-view="changes"]) .mdv-workspace-file-status { display: block; }
+  .mdv-app:is([data-view="read"], [data-view="changes"]) .mdv-workspace-file[data-change-kind="added"] .mdv-workspace-file-status { color: var(--mdv-added); }
+  .mdv-app:is([data-view="read"], [data-view="changes"]) .mdv-workspace-file[data-change-kind="deleted"] .mdv-workspace-file-status { color: var(--mdv-removed); }
   .mdv-toc { display: flex; flex-direction: column; gap: 3px; }
   .mdv-toc a { position: relative; min-height: 36px; display: flex; align-items: center; padding: 7px 9px; color: #9b9d98; text-decoration: none; font-size: 14px; line-height: 1.45; border-left: 2px solid transparent; }
   .mdv-toc a:hover { color: #d5d7d2; background: rgba(255,255,255,.025); }
