@@ -444,8 +444,7 @@ function updateSearchResults() {
     searchInput.removeAttribute("aria-activedescendant");
     setSearchStatus(`「${query}」に一致する文書はありません。`, "empty");
   } else {
-    const currentIndex = query ? 0 : searchState.matches.findIndex((entry) => entry.current);
-    setActiveSearchResult(currentIndex >= 0 ? currentIndex : 0, false);
+    setActiveSearchResult(0, false);
     setSearchStatus(`${searchState.matches.length} 件の文書`, "ready");
   }
 }
@@ -572,8 +571,7 @@ function updateWorkspacePaletteResults() {
     workspacePaletteInput.removeAttribute("aria-activedescendant");
     setWorkspacePaletteStatus(`「${query}」に一致するワークツリーはありません。`, "empty");
   } else {
-    const currentIndex = query ? 0 : workspacePaletteState.matches.findIndex((entry) => entry.current);
-    setActiveWorkspaceResult(currentIndex >= 0 ? currentIndex : 0, false);
+    setActiveWorkspaceResult(0, false);
     setWorkspacePaletteStatus(`${workspacePaletteState.matches.length} 件のワークツリー`, "ready");
   }
 }
@@ -608,7 +606,7 @@ function openSelectedWorkspace() {
 function rankWorkspaces(entries, query) {
   const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
   return entries.map((entry, index) => {
-    if (!terms.length) return { entry, score: entry.current ? 1_000 : -index };
+    if (!terms.length) return { entry, score: 0, index };
     let score = 0;
     for (const term of terms) {
       const fieldScore = Math.max(
@@ -620,9 +618,9 @@ function rankWorkspaces(entries, query) {
       score += fieldScore;
     }
     if (entry.current) score += 4;
-    return { entry, score };
+    return { entry, score, index };
   }).filter(({ score }) => Number.isFinite(score))
-    .sort((left, right) => right.score - left.score)
+    .sort((left, right) => compareUpdatedAt(left.entry, right.entry) || right.score - left.score || left.index - right.index)
     .map(({ entry }) => entry);
 }
 
@@ -643,6 +641,7 @@ function normalizeWorkspaceFile(value, index) {
     directory: slashIndex >= 0 ? relativePath.slice(0, slashIndex) : "",
     documentId: stringValue(value.documentId),
     changeKind: ["added", "modified", "deleted"].includes(value.changeKind) ? value.changeKind : null,
+    updatedAt: timestampValue(value.updatedAt),
     href,
     index,
   };
@@ -653,7 +652,7 @@ function normalizeWorkspaceFile(value, index) {
 function rankCatalog(entries, query) {
   const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
   return entries.map((entry) => {
-    if (!terms.length) return { entry, score: entry.current ? 1_000 : -entry.index };
+    if (!terms.length) return { entry, score: 0 };
     let score = 0;
     for (const term of terms) {
       const fieldScore = Math.max(
@@ -667,8 +666,12 @@ function rankCatalog(entries, query) {
     if (entry.current) score += 4;
     return { entry, score };
   }).filter(({ score }) => Number.isFinite(score))
-    .sort((left, right) => right.score - left.score || left.entry.index - right.entry.index)
+    .sort((left, right) => compareUpdatedAt(left.entry, right.entry) || right.score - left.score || left.entry.index - right.entry.index)
     .map(({ entry }) => entry);
+}
+
+function compareUpdatedAt(left, right) {
+  return (right.updatedAt || Number.NEGATIVE_INFINITY) - (left.updatedAt || Number.NEGATIVE_INFINITY);
 }
 
 function fuzzyFieldScore(value, term, weight) {
@@ -698,6 +701,11 @@ function normalizeSearchText(value) {
 
 function stringValue(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function timestampValue(value) {
+  const timestamp = Date.parse(stringValue(value));
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
 function filenameTitle(relativePath) {
@@ -835,6 +843,7 @@ function normalizeWorkspaceSummary(value) {
     repo: stringValue(value.repo),
     worktree: stringValue(value.worktree),
     branch: stringValue(value.branch),
+    updatedAt: timestampValue(value.updatedAt || value.renderedAt),
     href,
     current: value.id === workspaceId,
   };
