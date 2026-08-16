@@ -63,6 +63,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.doesNotMatch(html, /data-workspace-files|id="mdv-search-dialog"|data-action="open-search"/);
     assert.match(html, /aria-label="目次"/);
     assert.match(html, /同じファイルの変更履歴/);
+    assert.doesNotMatch(html, /data-action="mark-read"|既読にする|icon-check-read-linear/);
     assert.match(html, /href="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]css"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/viewer[.][a-f0-9]{64}[.]js"/);
     assert.match(html, /src="(?:[.][.]\/)+assets\/mermaid[.]min[.][a-f0-9]{64}[.]js"/);

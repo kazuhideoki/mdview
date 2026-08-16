@@ -12,7 +12,6 @@ const ICON_NAMES = [
   "alt-arrow-left-linear",
   "copy-linear",
   "code-linear",
-  "check-read-linear",
   "arrow-left-linear",
   "arrow-right-linear",
   "menu-dots-linear",
@@ -136,7 +135,6 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
         </div>
         <button type="button" data-action="next-revision" disabled><span>${workspaceScoped ? "次の作業" : "次の版"}</span><kbd>N</kbd>${icon("arrow-right-linear")}</button>
       </div>
-      <button class="mdv-mark-read" type="button" data-action="mark-read">${icon("check-read-linear")}既読にする</button>
     </footer>
     <aside class="mdv-settings" hidden>
       <div><strong>読みやすさ</strong><button type="button" data-action="toggle-settings" aria-label="表示設定を閉じる">${icon("menu-dots-linear")}</button></div>
