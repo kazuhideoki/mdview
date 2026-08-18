@@ -431,6 +431,13 @@ function updateSearchResults() {
       current.textContent = "現在";
       context.append(current);
     }
+    if (entry.changeKind) {
+      const status = document.createElement("span");
+      status.className = "mdv-search-change-status";
+      status.dataset.changeKind = entry.changeKind;
+      status.textContent = changeKindLabel(entry.changeKind);
+      context.append(status);
+    }
     option.append(main, context);
     searchResults.append(option);
   }
@@ -873,7 +880,7 @@ function renderWorkspaceFiles() {
     if (entry.changeKind) {
       const status = document.createElement("em");
       status.className = "mdv-workspace-file-status";
-      status.textContent = entry.changeKind === "added" ? "追加" : entry.changeKind === "deleted" ? "削除" : "変更";
+      status.textContent = changeKindLabel(entry.changeKind);
       link.append(status);
     }
     link.addEventListener("click", (event) => {
@@ -882,6 +889,10 @@ function renderWorkspaceFiles() {
     });
     workspaceFiles.append(link);
   }
+}
+
+function changeKindLabel(changeKind) {
+  return changeKind === "added" ? "追加" : changeKind === "deleted" ? "削除" : "変更";
 }
 
 function navigateToReaderHref(href) {

@@ -148,6 +148,9 @@
   .mdv-search-option-context > :not(:first-child, .mdv-search-current) { padding-left: 7px; border-left: 1px solid #444642; }
   .mdv-search-option-context time { flex: 0 0 auto; max-width: none; color: #777a74; }
   .mdv-search-current { flex: 0 0 auto; padding: 3px 6px; border: 1px solid #356a73; border-radius: 3px; color: var(--mdv-accent); font-size: 10px; }
+  .mdv-search-change-status { flex: 0 0 auto; color: var(--mdv-modified); font-size: 10px; font-weight: 650; }
+  .mdv-search-change-status[data-change-kind="added"] { color: var(--mdv-added); }
+  .mdv-search-change-status[data-change-kind="deleted"] { color: var(--mdv-removed); }
   .mdv-search-file-action { flex: 0 0 auto; color: var(--mdv-accent); }
   .mdv-search-help { min-height: 42px; display: flex; align-items: center; gap: 18px; padding: 7px 16px; border-top: 1px solid var(--mdv-border-soft); color: var(--mdv-faint); font-size: 11px; }
   .mdv-search-help span { display: inline-flex; align-items: center; gap: 5px; }
