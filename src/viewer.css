@@ -194,7 +194,7 @@
   .mdv-code button:hover, .mdv-diagram button:hover { color: var(--mdv-fg); }
   .mdv-code .shiki { margin: 0; padding: 18px 18px 20px; overflow: auto; background: transparent !important; font: 13.5px/1.68 var(--mdv-font-mono); tab-size: 2; }
   .mdv-code .shiki code { counter-reset: mdview-line; }
-  .mdv-code .shiki .line { position: relative; display: inline-block; min-width: 100%; padding-left: 3em; counter-increment: mdview-line; }
+  .mdv-code .shiki .line { position: relative; display: inline-block; min-width: 100%; min-height: 1lh; padding-left: 3em; counter-increment: mdview-line; }
   .mdv-code .shiki .line::before { content: counter(mdview-line); position: absolute; left: 0; width: 1.8em; color: #646762; text-align: right; user-select: none; }
   .mdv-code.collapsed .shiki { max-height: 132px; overflow: hidden; border-bottom: 8px solid var(--mdv-surface-raised); }
   .mdv-table-wrap { position: relative; margin: 1.25em 0; overflow-x: auto; border: 1px solid var(--mdv-border); }
