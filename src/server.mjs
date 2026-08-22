@@ -669,6 +669,7 @@ export async function ensureServer(options = {}) {
   const handle = await open(log, "a", 0o600);
   const cliPath = new URL("./cli.mjs", import.meta.url);
   const child = spawn(process.execPath, [cliPath.pathname, "serve", "--daemon"], {
+    cwd: runtime,
     detached: true,
     stdio: ["ignore", handle.fd, handle.fd],
     env: process.env,

@@ -21,9 +21,11 @@ async function git(args, cwd) {
 
 export async function rawDiffBetweenFiles(beforePath, afterPath, relativePath) {
   const args = ["diff", "--no-index", "--no-ext-diff", "--unified=3", "--", beforePath || "/dev/null", afterPath || "/dev/null"];
+  const absoluteInput = [beforePath, afterPath].find((candidate) => candidate && path.isAbsolute(candidate));
+  const cwd = absoluteInput ? path.dirname(absoluteInput) : process.cwd();
   let patch = "";
   try {
-    const { stdout } = await execFileAsync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     patch = stdout;
   } catch (error) {
     if (error?.code !== 1 || typeof error.stdout !== "string") throw error;

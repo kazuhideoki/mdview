@@ -1,9 +1,44 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { access, mkdtemp, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { changedLinesFromPatch, lineChangesFromPatch } from "../src/document.mjs";
+
+const execFileAsync = promisify(execFile);
+
+test("raw diff does not depend on the server's launch directory still existing", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-diff-cwd-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const doomedCwd = path.join(root, "removed-worktree");
+  const beforePath = path.join(root, "before.md");
+  const afterPath = path.join(root, "after.md");
+  await mkdir(doomedCwd);
+  await writeFile(beforePath, "Before\n");
+  await writeFile(afterPath, "After\n");
+
+  const documentModule = new URL("../src/document.mjs", import.meta.url).href;
+  const script = `
+    import { rm } from "node:fs/promises";
+    import { rawDiffBetweenFiles } from ${JSON.stringify(documentModule)};
+    await rm(process.cwd(), { recursive: true });
+    process.stdout.write(await rawDiffBetweenFiles(process.argv[1], process.argv[2], "note.md"));
+  `;
+  const { stdout } = await execFileAsync(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    script,
+    beforePath,
+    afterPath,
+  ], { cwd: doomedCwd });
+
+  assert.match(stdout, /--- a\/note[.]md/);
+  assert.match(stdout, /\+\+\+ b\/note[.]md/);
+  assert.match(stdout, /-Before/);
+  assert.match(stdout, /\+After/);
+});
 
 test("changed line parsing excludes unchanged diff context", () => {
   const patch = [
