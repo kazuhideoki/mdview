@@ -37,6 +37,7 @@ import {
 } from "./workspace-history.mjs";
 
 const execFileAsync = promisify(execFile);
+const MAX_INLINE_DIFF_LCS_CELLS = 250_000;
 
 export async function renderMarkdownFile(inputPath, options = {}) {
   const absolutePath = path.resolve(options.cwd || process.cwd(), inputPath);
@@ -428,6 +429,7 @@ async function renderMarkdownPage({
   if (beforeTree) {
     mergeTableRowDiffs(tree, beforeTree, addedDiffLines, removedDiffLines);
     mergeListItemDiffs(tree, beforeTree, addedDiffLines, removedDiffLines, lineChanges.hunks);
+    markInlineDiffs(tree, beforeTree, addedDiffLines, removedDiffLines, lineChanges.hunks);
   }
   const rendered = await renderDocument(tree, {
     changedLines,
@@ -558,6 +560,183 @@ function mergeTableRowDiffs(currentTree, previousTree, currentDiffLines, previou
   }
 }
 
+function markInlineDiffs(currentTree, previousTree, currentDiffLines, previousDiffLines, hunks) {
+  markMergedInlineDiffs(currentTree);
+
+  const currentBlocks = changedTopLevelBlocks(currentTree, currentDiffLines);
+  const previousBlocks = changedTopLevelBlocks(previousTree, previousDiffLines);
+  const usedCurrent = new Set();
+  const usedPrevious = new Set();
+
+  for (const hunk of hunks) {
+    const currentRun = currentBlocks.filter((node) => !usedCurrent.has(node)
+      && overlapsDiffPositions(node, hunk.addedAt, "newLine"));
+    const previousRun = previousBlocks.filter((node) => !usedPrevious.has(node)
+      && overlapsDiffPositions(node, hunk.removedAt, "oldLine"));
+    const proposals = previousRun.flatMap((previous) => {
+      const projectedNewLines = hunk.removedAt
+        .filter((position) => lineFallsInside(position.oldLine, previous))
+        .map((position) => position.newLine);
+      const candidates = currentRun.filter((current) => current.type === previous.type
+        && projectedNewLines.some((line) => lineFallsInside(line, current)));
+      return candidates.length === 1 ? [{ previous, current: candidates[0] }] : [];
+    });
+    for (const proposal of proposals) {
+      if (proposals.filter(({ current }) => current === proposal.current).length !== 1) continue;
+      if (proposals.length > 1 && !hasSharedInlineToken(proposal.previous, proposal.current)) continue;
+      markInlineTextChanges(proposal.previous, proposal.current);
+      usedCurrent.add(proposal.current);
+      usedPrevious.add(proposal.previous);
+    }
+  }
+}
+
+function markMergedInlineDiffs(tree) {
+  visit(tree, (node) => {
+    if (!Array.isArray(node.children)) return;
+    for (let index = 0; index < node.children.length - 1; index += 1) {
+      const removed = node.children[index];
+      const added = node.children[index + 1];
+      if (removed?.data?.mdviewDiffKind !== "removed" || added?.data?.mdviewDiffKind !== "added") continue;
+      if (!removed.data.mdviewInlinePair || !added.data.mdviewInlinePair) continue;
+      if (removed.type !== added.type) continue;
+      markInlineTextChanges(removed, added);
+      index += 1;
+    }
+  });
+}
+
+function changedTopLevelBlocks(tree, diffLines) {
+  const lines = new Set(diffLines);
+  return (tree.children ?? []).filter((node) => node.position
+    && !node.data?.mdviewMergedDiff
+    && rangeHasChange(node, lines));
+}
+
+function overlapsDiffPositions(node, positions, lineKey) {
+  return positions.some((position) => lineFallsInside(position[lineKey], node));
+}
+
+function lineFallsInside(line, node) {
+  return line >= node.position.start.line && line <= node.position.end.line;
+}
+
+function hasSharedInlineToken(previousNode, currentNode) {
+  const previousTokens = diffTokens(inlineTextLayouts(previousNode).map(({ value }) => value).join("\n"));
+  const currentTokens = diffTokens(inlineTextLayouts(currentNode).map(({ value }) => value).join("\n"));
+  if (!previousTokens || !currentTokens) return false;
+  const comparablePrevious = new Set(previousTokens
+    .map(({ value }) => value)
+    .filter((value) => /[\p{L}\p{N}]/u.test(value)));
+  return currentTokens.some(({ value }) => comparablePrevious.has(value));
+}
+
+function markInlineTextChanges(previousNode, currentNode) {
+  const pairs = semanticInlinePairs(previousNode, currentNode);
+  for (const [previous, current] of pairs) {
+    const previousLayouts = inlineTextLayouts(previous);
+    const currentLayouts = inlineTextLayouts(current);
+    if (previousLayouts.length !== currentLayouts.length) continue;
+    for (let index = 0; index < previousLayouts.length; index += 1) {
+      markInlineLayoutChanges(previousLayouts[index], currentLayouts[index]);
+    }
+  }
+}
+
+function semanticInlinePairs(previousNode, currentNode) {
+  if (previousNode.type !== currentNode.type) return [];
+  if (["paragraph", "heading", "tableCell"].includes(previousNode.type)) {
+    return [[previousNode, currentNode]];
+  }
+  if (!["tableRow", "listItem", "blockquote"].includes(previousNode.type)) return [];
+  const previousChildren = previousNode.children ?? [];
+  const currentChildren = currentNode.children ?? [];
+  if (previousChildren.length !== currentChildren.length) return [];
+  if (previousChildren.some((child, index) => child.type !== currentChildren[index].type)) return [];
+  return previousChildren.flatMap((child, index) => semanticInlinePairs(child, currentChildren[index]));
+}
+
+function inlineTextLayouts(node) {
+  const layouts = [{ value: "", leaves: [] }];
+  const append = (child) => {
+    if (["text", "inlineCode"].includes(child.type) && typeof child.value === "string") {
+      const layout = layouts.at(-1);
+      const start = layout.value.length;
+      layout.value += child.value;
+      layout.leaves.push({ node: child, start, end: layout.value.length });
+      return;
+    }
+    if (child.type === "break") {
+      if (layouts.at(-1).value || layouts.at(-1).leaves.length > 0) layouts.push({ value: "", leaves: [] });
+      return;
+    }
+    for (const descendant of child.children ?? []) append(descendant);
+  };
+  append(node);
+  return layouts.filter((layout) => layout.value || layout.leaves.length > 0);
+}
+
+function markInlineLayoutChanges(previous, current) {
+  if (!previous.value || !current.value || previous.value === current.value) return;
+  const ranges = unmatchedTokenRanges(previous.value, current.value);
+  if (!ranges) return;
+  applyInlineRanges(previous.leaves, ranges.leftRanges);
+  applyInlineRanges(current.leaves, ranges.rightRanges);
+}
+
+function unmatchedTokenRanges(left, right) {
+  const leftTokens = diffTokens(left);
+  const rightTokens = diffTokens(right);
+  if (!leftTokens || !rightTokens) return null;
+  if (leftTokens.length * rightTokens.length > MAX_INLINE_DIFF_LCS_CELLS) return null;
+  const matches = longestCommonSubsequence(
+    leftTokens.map((token) => token.value),
+    rightTokens.map((token) => token.value),
+  );
+  return {
+    leftRanges: unmatchedRanges(leftTokens, matches.map(([leftIndex]) => leftIndex), left),
+    rightRanges: unmatchedRanges(rightTokens, matches.map(([, rightIndex]) => rightIndex), right),
+  };
+}
+
+function diffTokens(value) {
+  if (typeof Intl?.Segmenter !== "function") return null;
+  const segmenter = new Intl.Segmenter("und", { granularity: "word" });
+  return [...segmenter.segment(value)]
+    .filter((segment) => !/^\s+$/u.test(segment.segment))
+    .map((segment) => ({
+      value: segment.segment,
+      start: segment.index,
+      end: segment.index + segment.segment.length,
+    }));
+}
+
+function unmatchedRanges(tokens, matchedIndexes, source) {
+  const matched = new Set(matchedIndexes);
+  const ranges = [];
+  for (const [index, token] of tokens.entries()) {
+    if (matched.has(index)) continue;
+    const previous = ranges.at(-1);
+    if (previous && /^\s*$/u.test(source.slice(previous.end, token.start))) previous.end = token.end;
+    else ranges.push({ start: token.start, end: token.end });
+  }
+  return ranges;
+}
+
+function applyInlineRanges(leaves, ranges) {
+  for (const leaf of leaves) {
+    const localRanges = ranges
+      .map((range) => ({
+        start: Math.max(range.start, leaf.start) - leaf.start,
+        end: Math.min(range.end, leaf.end) - leaf.start,
+      }))
+      .filter((range) => range.start < range.end);
+    if (localRanges.length > 0) {
+      leaf.node.data = { ...leaf.node.data, mdviewInlineDiffRanges: localRanges };
+    }
+  }
+}
+
 function changedTables(tree, diffLines) {
   const lines = new Set(diffLines);
   return (tree.children ?? []).filter((node) => node.type === "table" && rangeHasChange(node, lines));
@@ -640,10 +819,11 @@ function mergeListItems(currentItems, previousItems, { ordered, currentStart, pr
   for (const [nextPrevious, nextCurrent] of [...matches, [previousItems.length, currentItems.length]]) {
     const previousRun = previousItems.slice(previousIndex, nextPrevious);
     const currentRun = currentItems.slice(currentIndex, nextCurrent);
+    const inlinePair = previousRun.length === 1 && currentRun.length === 1;
     if (previousRun.length === currentRun.length) {
       for (let index = 0; index < previousRun.length; index += 1) {
-        merged.push(markListItem(previousRun[index], "removed"));
-        merged.push(markListItem(currentRun[index], "added"));
+        merged.push(markListItem(previousRun[index], "removed", inlinePair));
+        merged.push(markListItem(currentRun[index], "added", inlinePair));
       }
     } else {
       merged.push(...previousRun.map((item) => markListItem(item, "removed")));
@@ -660,8 +840,8 @@ function mergeListItems(currentItems, previousItems, { ordered, currentStart, pr
   return merged;
 }
 
-function markListItem(item, diffKind) {
-  item.data = { ...item.data, mdviewDiffKind: diffKind };
+function markListItem(item, diffKind, inlinePair = false) {
+  item.data = { ...item.data, mdviewDiffKind: diffKind, mdviewInlinePair: inlinePair };
   return item;
 }
 
@@ -676,10 +856,11 @@ function mergeTableRows(currentRows, previousRows) {
   for (const [nextPrevious, nextCurrent] of [...matches, [previousRows.length, currentRows.length]]) {
     const previousRun = previousRows.slice(previousIndex, nextPrevious);
     const currentRun = currentRows.slice(currentIndex, nextCurrent);
+    const inlinePair = previousRun.length === 1 && currentRun.length === 1;
     if (previousRun.length === currentRun.length) {
       for (let index = 0; index < previousRun.length; index += 1) {
-        merged.push(markTableRow(previousRun[index], "removed"));
-        merged.push(markTableRow(currentRun[index], "added"));
+        merged.push(markTableRow(previousRun[index], "removed", inlinePair));
+        merged.push(markTableRow(currentRun[index], "added", inlinePair));
       }
     } else {
       merged.push(...previousRun.map((row) => markTableRow(row, "removed")));
@@ -722,8 +903,8 @@ function longestCommonSubsequence(left, right) {
   return matches;
 }
 
-function markTableRow(row, diffKind) {
-  row.data = { ...row.data, mdviewDiffKind: diffKind };
+function markTableRow(row, diffKind, inlinePair = false) {
+  row.data = { ...row.data, mdviewDiffKind: diffKind, mdviewInlinePair: inlinePair };
   return row;
 }
 

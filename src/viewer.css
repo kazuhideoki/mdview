@@ -25,8 +25,10 @@
     --mdv-modified: #d8a62e;
     --mdv-added: #57ab5a;
     --mdv-added-bg: rgba(46, 160, 67, .15);
+    --mdv-added-inline-bg: rgba(46, 160, 67, .42);
     --mdv-removed: #e06c75;
     --mdv-removed-bg: rgba(248, 81, 73, .15);
+    --mdv-removed-inline-bg: rgba(248, 81, 73, .42);
     --mdv-success: #72b879;
     --mdv-measure: 76ch;
     --mdv-font-size: 17px;
@@ -252,6 +254,9 @@
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind]::before { content: attr(data-diff-marker); position: absolute; left: -25px; top: .18em; bottom: auto; width: 18px; height: auto; background: transparent; color: var(--mdv-diff-color); text-align: center; font: 750 .82em/1.6 var(--mdv-font-mono); }
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="removed"] { --mdv-diff-color: var(--mdv-removed); --mdv-diff-bg: var(--mdv-removed-bg); --mdv-change-color: var(--mdv-removed); }
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="added"] { --mdv-diff-color: var(--mdv-added); --mdv-diff-bg: var(--mdv-added-bg); --mdv-change-color: var(--mdv-added); }
+  .mdv-app[data-view="changes"] [data-diff-kind="removed"] { --mdv-inline-diff-bg: var(--mdv-removed-inline-bg); }
+  .mdv-app[data-view="changes"] [data-diff-kind="added"] { --mdv-inline-diff-bg: var(--mdv-added-inline-bg); }
+  .mdv-app[data-view="changes"] [data-diff-kind] .mdv-inline-diff { padding: .04em .08em; margin-inline: -.08em; border-radius: 2px; background: var(--mdv-inline-diff-bg); color: var(--mdv-fg); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="removed"]::before { content: "-"; }
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="added"]::before { content: "+"; }
   .mdv-app[data-view="changes"] .mdv-document-body > .mdv-paragraph[data-diff-kind] { padding: .18em .55em; margin-left: -.55em; }
