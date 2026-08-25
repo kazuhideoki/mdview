@@ -74,7 +74,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
         </div>
         <p class="mdv-search-status" id="mdv-search-status" role="status" aria-live="polite">文書を読み込んでいます…</p>
         <ul class="mdv-search-results" id="mdv-search-results" role="listbox" aria-label="文書の検索結果"></ul>
-        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd> 選択</span><span><kbd>Enter</kbd> 開く</span><span><kbd>Esc</kbd> 閉じる</span></footer>
+        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd><i>または</i><kbd>⌃N</kbd><kbd>⌃P</kbd> 選択</span><span><kbd>Enter</kbd> 開く</span><span><kbd>Esc</kbd> 閉じる</span></footer>
       </section>
     </div>`
     : "";
@@ -113,7 +113,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
           <section>
             <h3>パレットの操作</h3>
             <dl>
-              <div><dt><span><kbd>↑</kbd><kbd>↓</kbd></span></dt><dd>項目を選択</dd></div>
+              <div><dt><span><kbd>↑</kbd><kbd>↓</kbd><i>または</i><kbd>⌃N</kbd><kbd>⌃P</kbd></span></dt><dd>項目を選択</dd></div>
               <div><dt><kbd>Enter</kbd></dt><dd>開く</dd></div>
               <div><dt><kbd>Esc</kbd></dt><dd>閉じる</dd></div>
             </dl>
@@ -192,7 +192,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
         </div>
         <p class="mdv-search-status" id="mdv-outline-palette-status" role="status" aria-live="polite">見出しを読み込んでいます…</p>
         <ul class="mdv-search-results mdv-outline-results" id="mdv-outline-palette-results" role="listbox" aria-label="アウトライン"></ul>
-        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd> 選択</span><span><kbd>Enter</kbd> 移動</span><span><kbd>Esc</kbd> 閉じる</span></footer>
+        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd><i>または</i><kbd>⌃N</kbd><kbd>⌃P</kbd> 選択</span><span><kbd>Enter</kbd> 移動</span><span><kbd>Esc</kbd> 閉じる</span></footer>
       </section>
     </div>
     <div class="mdv-search-overlay mdv-workspace-palette-overlay" data-workspace-palette-overlay hidden>
@@ -206,7 +206,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
         </div>
         <p class="mdv-search-status" id="mdv-workspace-palette-status" role="status" aria-live="polite">ワークツリーを読み込んでいます…</p>
         <ul class="mdv-search-results" id="mdv-workspace-palette-results" role="listbox" aria-label="ワークツリーの検索結果"></ul>
-        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd> 選択</span><span><kbd>Enter</kbd> 開く</span><span><kbd>Esc</kbd> 閉じる</span></footer>
+        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd><i>または</i><kbd>⌃N</kbd><kbd>⌃P</kbd> 選択</span><span><kbd>Enter</kbd> 開く</span><span><kbd>Esc</kbd> 閉じる</span></footer>
       </section>
     </div>
     ${shortcutsOverlay}

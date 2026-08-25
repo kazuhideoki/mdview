@@ -154,6 +154,7 @@
   .mdv-outline-marker { flex: 0 0 auto; min-width: 15px; color: var(--mdv-accent); font: 12px/1.4 var(--mdv-font-mono); }
   .mdv-search-help { min-height: 42px; display: flex; align-items: center; gap: 18px; padding: 7px 16px; border-top: 1px solid var(--mdv-border-soft); color: var(--mdv-faint); font-size: 11px; }
   .mdv-search-help span { display: inline-flex; align-items: center; gap: 5px; }
+  .mdv-search-help i { color: var(--mdv-faint); font-size: 9px; font-style: normal; }
   .mdv-search-help kbd { min-width: 22px; padding: 3px 4px; font-size: 10px; }
   .mdv-shortcuts-overlay { align-items: center; padding-block: 20px; }
   .mdv-shortcuts-dialog { width: min(680px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); overflow: auto; border: 1px solid #3a3c38; border-radius: 7px; background: #181917; box-shadow: 0 28px 90px rgba(0,0,0,.58); }
