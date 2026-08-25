@@ -245,15 +245,70 @@ test("repository sync preserves a complete commitless hook snapshot as its basel
   }]);
 });
 
+test("repository sync skips lineage discovery when a non-merge HEAD is already recorded", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-same-head-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const historyRoot = path.join(directory, "history");
+  const mainRoot = path.join(directory, "main");
+  const commonDir = path.join(directory, "git-common");
+  await mkdir(mainRoot);
+  await mkdir(commonDir);
+  const repositoryId = createHash("sha256").update(commonDir).digest("hex").slice(0, 24);
+  const parentCommit = "a".repeat(40);
+  const currentCommit = "d".repeat(40);
+  const contents = "# Current\n";
+  const recorded = await registerWorkspaceRevision({
+    root: mainRoot,
+    renderedAt: "2026-08-25T10:00:00.000Z",
+    source: "repository-sync",
+    sessionId: null,
+    turnId: null,
+    meta: {
+      repo: "repo",
+      worktree: "repo",
+      branch: "main",
+      head: currentCommit.slice(0, 7),
+      repositoryId,
+      commit: currentCommit,
+      parents: [parentCommit],
+    },
+    files: { "README.md": digest(contents) },
+    changes: [],
+  }, { root: historyRoot });
+  const gitCalls = [];
+  const execFile = async (_command, args) => {
+    gitCalls.push(args);
+    if (args[0] === "rev-parse" && args[1] === "--git-common-dir") return { stdout: `${commonDir}\n` };
+    if (args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: `${currentCommit}\n` };
+    if (args[0] === "rev-list" && args[1] === "--parents") return { stdout: `${currentCommit} ${parentCommit}\n` };
+    throw new Error(`Unexpected Git call: ${args.join(" ")}`);
+  };
+
+  const reconciled = await reconcileWorkspaceRoot(mainRoot, {
+    historyRoot,
+    now: Date.parse("2026-08-25T11:00:00.000Z"),
+    execFile,
+  });
+
+  assert.equal(reconciled.action, "unchanged");
+  assert.equal(reconciled.revision.id, recorded.revision.id);
+  assert.equal(gitCalls.filter((args) => args[0] === "rev-parse" && args[1] === "--git-common-dir").length, 1);
+  assert.equal(gitCalls.filter((args) => args[0] === "branch").length, 0);
+  assert.equal(gitCalls.filter((args) => args[0] === "merge-base").length, 0);
+  assert.equal(gitCalls.filter((args) => args[0] === "rev-list" && args[1] === "--first-parent").length, 0);
+});
+
 test("repository sync can attach a source history that appears after the primary HEAD was recorded", async (t) => {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-late-source-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const historyRoot = path.join(directory, "history");
   const mainRoot = path.join(directory, "main");
   const featureRoot = path.join(directory, "feature");
+  const unrelatedRoot = path.join(directory, "unrelated");
   const commonDir = path.join(directory, "git-common");
   await mkdir(mainRoot);
   await mkdir(featureRoot);
+  await mkdir(unrelatedRoot);
   await mkdir(commonDir);
   const repositoryId = createHash("sha256").update(commonDir).digest("hex").slice(0, 24);
   const firstParent = "a".repeat(40);
@@ -298,6 +353,23 @@ test("repository sync can attach a source history that appears after the primary
     files,
     changes: [],
   }, { root: historyRoot });
+  await registerWorkspaceRevision({
+    root: unrelatedRoot,
+    renderedAt: "2026-08-25T10:30:00.000Z",
+    source: "hook",
+    sessionId: "unrelated-session",
+    turnId: "unrelated-turn",
+    meta: {
+      repo: "repo",
+      worktree: "unrelated/docs",
+      branch: "unrelated/docs",
+      head: "c".repeat(7),
+      commit: "c".repeat(40),
+      parents: [firstParent],
+    },
+    files,
+    changes: [],
+  }, { root: historyRoot });
   const gitCalls = [];
   const execFile = async (_command, args) => {
     gitCalls.push(args);
@@ -322,6 +394,9 @@ test("repository sync can attach a source history that appears after the primary
   assert.equal(reconciled.revision.mergeSources[0].workspaceId, feature.manifest.workspaceId);
   assert.equal(reconciled.revision.mergeSources[0].throughRevisionId, feature.revision.id);
   assert.ok(!gitCalls.some((args) => args[0] === "ls-tree" && args.at(-1) === mergeCommit));
+  assert.equal(gitCalls.filter((args) => args[0] === "rev-parse" && args[1] === "--git-common-dir").length, 1);
+  assert.equal(gitCalls.filter((args) => args[0] === "merge-base").length, 0);
+  assert.equal(gitCalls.filter((args) => args[0] === "rev-list" && args[1] === "--first-parent").length, 0);
   assert.equal((await readWorkspaceHistoryForRoot(mainRoot, { root: historyRoot })).revisions.length, main.manifest.revisions.length + 1);
 });
 
