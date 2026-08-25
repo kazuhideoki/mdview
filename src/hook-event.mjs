@@ -19,6 +19,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolveGitRepositoryContext, worktreeLabel } from "./codex-context.mjs";
 import { discoverMergeSources } from "./repository-lineage.mjs";
+import { reconcilePrimaryWorkspace } from "./repository-sync.mjs";
 import { storeHistorySnapshot } from "./history.mjs";
 import {
   readWorkspaceHistoryForRoot,
@@ -415,6 +416,13 @@ export async function processHookEvent(payload, options = {}) {
         contentHash: snapshot.files[relativePath],
       })),
     };
+    const syncPrimary = options.reconcilePrimaryWorkspace || reconcilePrimaryWorkspace;
+    try {
+      result.repositorySync = await syncPrimary(snapshot.root, { ...options, historyRoot: options.historyRoot });
+    } catch (error) {
+      result.repositorySync = { action: "failed", added: false, revision: null };
+      await appendHookLog(`Repository workspace sync failed: ${error?.stack || String(error)}`, options).catch(() => {});
+    }
     if (changedFiles.length > 0 && typeof options.onChangedFiles === "function") {
       await options.onChangedFiles(result, payload);
     }

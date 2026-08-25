@@ -473,8 +473,18 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     const currentRevision = workspace.revisions.at(-1);
     assert.deepEqual(workspace.revisions[0].changes, []);
     const secondId = workspaceDocumentId(repo, "second.md");
+    const reconciledWorkspaces = [];
+    let reconcileMode = "success";
+    let releaseReconcile = null;
     const { startServer } = await import(`../src/server.mjs?workspace-server=${Date.now()}`);
-    const server = await startServer({ port: 0 });
+    const server = await startServer({
+      port: 0,
+      reconcileWorkspace: async (workspaceId) => {
+        reconciledWorkspaces.push(workspaceId);
+        if (reconcileMode === "failure") throw new Error("Git unavailable");
+        if (reconcileMode === "blocked") await new Promise((resolve) => { releaseReconcile = resolve; });
+      },
+    });
     context.after(() => new Promise((resolve) => server.close(resolve)));
     const origin = `http://127.0.0.1:${server.address().port}`;
 
@@ -482,6 +492,7 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     assert.equal(summaries.length, 1);
     assert.equal(summaries[0].worktree, "feature/docs");
     const details = await fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`).then((response) => response.json());
+    assert.deepEqual(reconciledWorkspaces, [workspace.workspaceId]);
     assert.deepEqual(details.files.map((file) => file.relativePath), ["second.md", "first.md"]);
     assert.deepEqual(details.files.map((file) => file.updatedAt), [
       "2026-08-15T11:00:00.000Z",
@@ -489,6 +500,26 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     ]);
     assert.equal(details.revisions.length, 2);
     assert.ok(details.revisions.every((revision) => revision.href.includes(`/files/${secondId}`)));
+
+    reconcileMode = "failure";
+    const fallbackDetails = await fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`);
+    assert.equal(fallbackDetails.status, 200);
+    assert.deepEqual((await fallbackDetails.json()).lineageWarnings, [{
+      workspaceId: workspace.workspaceId,
+      code: "repository-sync-failed",
+    }]);
+
+    reconcileMode = "blocked";
+    const callsBeforeConcurrent = reconciledWorkspaces.length;
+    const concurrentDetails = [
+      fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`),
+      fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`),
+    ];
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(reconciledWorkspaces.length, callsBeforeConcurrent + 1);
+    releaseReconcile();
+    assert.deepEqual(await Promise.all(concurrentDetails.map(async (operation) => (await operation).status)), [200, 200]);
+    reconcileMode = "success";
 
     const documentResponse = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}?view=changes`);
     assert.equal(documentResponse.status, 200);

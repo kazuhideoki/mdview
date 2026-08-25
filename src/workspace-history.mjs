@@ -268,7 +268,7 @@ function normalizeMergeSources(value, destinationWorkspaceId) {
       sourceHead: typeof source.sourceHead === "string" && /^[a-f0-9]+$/i.test(source.sourceHead) ? source.sourceHead : null,
     };
   });
-  return sources.sort((left, right) => left.workspaceId.localeCompare(right.workspaceId));
+  return sources;
 }
 
 function validateRelativePath(value) {
