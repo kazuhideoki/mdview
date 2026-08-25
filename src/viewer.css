@@ -232,7 +232,8 @@
   .mdv-table tr:last-child td { border-bottom: 0; }
   .mdv-table :is(th, td):last-child { border-right: 0; }
   .mdv-table tr[data-diff-kind="removed"] { display: none; }
-  .mdv-table-diff-marker { display: inline-block; width: 1.35em; margin-left: -.35em; color: var(--mdv-diff-color); font: 750 .9em/1 var(--mdv-font-mono); }
+  .mdv-table-diff-marker, .mdv-table-diff-label { display: none; }
+  .mdv-table-diff-marker { position: absolute; left: calc(-1 * var(--mdv-table-diff-gutter)); top: 50%; width: var(--mdv-table-diff-gutter); translate: 0 -50%; color: var(--mdv-diff-color); text-align: center; font: 750 .9em/1 var(--mdv-font-mono); pointer-events: none; }
   .mdv-diagram { position: relative; margin: 1.6em 0; border: 1px solid var(--mdv-border); background: var(--mdv-surface-code); }
   .mdv-diagram-stage { min-height: 220px; display: grid; place-items: center; padding: 22px; overflow: auto; }
   .mdv-diagram-stage svg { max-width: 100%; height: auto; }
@@ -262,9 +263,12 @@
   .mdv-app[data-view="changes"] .mdv-list-diff-marker { position: absolute; display: inline-block; left: -1.7em; width: 1em; color: var(--mdv-diff-color); text-align: center; font: 750 .9em/1.6 var(--mdv-font-mono); }
   .mdv-app[data-view="changes"] .mdv-list-structural-marker { position: absolute; display: inline-block; left: .15em; width: 1em; color: #cdcbc5; text-align: center; font: 650 1em/1.5 var(--mdv-font-sans); }
   .mdv-app[data-view="changes"] .mdv-list-structural-marker-ordered { left: -.15em; width: 1.6em; text-align: right; font-variant-numeric: tabular-nums; }
+  .mdv-app[data-view="changes"] .mdv-table-wrap { --mdv-table-diff-gutter: 24px; width: calc(100% + var(--mdv-table-diff-gutter)); margin-left: calc(-1 * var(--mdv-table-diff-gutter)); padding-left: var(--mdv-table-diff-gutter); border: 0; box-sizing: border-box; }
+  .mdv-app[data-view="changes"] .mdv-table { border: 1px solid var(--mdv-border); }
+  .mdv-app[data-view="changes"] .mdv-table-diff-marker, .mdv-app[data-view="changes"] .mdv-table-diff-label { display: block; }
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] { display: table-row; --mdv-change-color: var(--mdv-diff-color); }
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] > :is(th, td) { background: var(--mdv-diff-bg); }
-  .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] > :first-child { border-left: 2px solid var(--mdv-diff-color); }
+  .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] > :first-child { position: relative; border-left: 2px solid var(--mdv-diff-color); }
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="removed"] { --mdv-diff-color: var(--mdv-removed); --mdv-diff-bg: var(--mdv-removed-bg); }
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="added"] { --mdv-diff-color: var(--mdv-added); --mdv-diff-bg: var(--mdv-added-bg); }
   .mdv-app[data-view="changes"] .mdv-heading[data-diff-kind]::after { display: none; }
