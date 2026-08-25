@@ -39,7 +39,7 @@ export async function renderDocument(tree, { changedLines = [], diffLines = [], 
 
 async function renderNode(node, state, topLevel = false) {
   const changed = rangeHasChange(node, state.changedLineSet);
-  const changeAttr = changed ? ' data-change="modified"' : "";
+  const changeAttr = changed && !node.data?.mdviewMergedDiff ? ' data-change="modified"' : "";
   const diffAttr = topLevel && !node.data?.mdviewMergedDiff && state.diffKind && rangeHasChange(node, state.diffLineSet)
     ? ` data-diff-kind="${state.diffKind}"`
     : "";
@@ -63,8 +63,18 @@ async function renderNode(node, state, topLevel = false) {
       const start = node.ordered && node.start && node.start !== 1 ? ` start="${node.start}"` : "";
       return `<${tag} class="mdv-block mdv-list"${start}${changeAttr}${diffAttr}${sourceAttrs}>${await renderChildren(node.children ?? [], state)}</${tag}>`;
     }
-    case "listItem":
-      return `<li${typeof node.checked === "boolean" ? ' class="mdv-task-item"' : ""}>${typeof node.checked === "boolean" ? `<input type="checkbox" disabled${node.checked ? " checked" : ""}>` : ""}${await renderChildren(node.children ?? [], state)}</li>`;
+    case "listItem": {
+      const diffKind = node.data?.mdviewDiffKind;
+      const itemDiffAttr = diffKind ? ` data-diff-kind="${diffKind}"` : "";
+      const itemSourceAttrs = node.position && diffKind !== "removed"
+        ? ` data-source-start="${node.position.start.line}" data-source-end="${node.position.end.line}"`
+        : "";
+      const valueAttr = Number.isInteger(node.data?.mdviewListValue) ? ` value="${node.data.mdviewListValue}"` : "";
+      const marker = diffKind
+        ? `<span class="mdv-list-diff-marker" aria-hidden="true">${diffKind === "removed" ? "−" : "+"}</span><span class="mdv-list-structural-marker${Number.isInteger(node.data?.mdviewListValue) ? " mdv-list-structural-marker-ordered" : ""}" aria-hidden="true">${Number.isInteger(node.data?.mdviewListValue) ? `${node.data.mdviewListValue}.` : "•"}</span><span class="mdv-visually-hidden">${diffKind === "removed" ? "削除項目: " : "追加項目: "}</span>`
+        : "";
+      return `<li${typeof node.checked === "boolean" ? ' class="mdv-task-item"' : ""}${valueAttr}${itemDiffAttr}${itemSourceAttrs}>${marker}${typeof node.checked === "boolean" ? `<input type="checkbox" disabled${node.checked ? " checked" : ""}>` : ""}${await renderChildren(node.children ?? [], state)}</li>`;
+    }
     case "code": {
       if (node.lang === "mermaid" || node.lang === "d2") {
         return renderDiagram(node, changeAttr, diffAttr, sourceAttrs);

@@ -22,6 +22,10 @@ When implementing from a selected generated mock, treat that image as the source
 
 In the reading view, preserve Markdown's structural markers such as list bullets and present the document as ordinary reading material. Do not show change-state accents, markers, labels, timeline dots, or decorative `H` badges; keep change indicators in Changes view.
 
+In Changes view, render list differences at list-item granularity, like table row differences. Keep unchanged items once inside a single list and show only changed items as removed/added; do not replace the entire list when one item changes.
+
+For item-level list differences, do not also show a list-level modified accent. Keep the changed item's bullet or ordered marker visible inside the removed/added background, place an aligned `+` or `-` marker to its left, and keep changed and unchanged item text on the same reading axis.
+
 Treat the selected worktree as the primary browsing scope. Select or fix the worktree before file search, and limit the sidebar and file search results to Markdown in that worktree; do not mix same-named files from other worktrees into those results.
 
 Expose only `Read` and `Changes` as reader view modes. Do not add a user-facing raw/row diff view or shortcut.
