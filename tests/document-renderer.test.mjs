@@ -411,6 +411,75 @@ test("renders a changed Markdown table as row-level changes in one table", async
   }
 });
 
+test("renders a changed Markdown list as item-level changes in one list", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-list-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "list.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?list-diff=${Date.now()}`);
+    await writeFile(markdownPath, "# Notes\n\n- Alpha\n- Before\n- Omega\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "lists", branch: "main", relativePath: "list.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Notes\n\n- Alpha\n- After\n- Omega\n");
+    const second = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "lists", branch: "main", relativePath: "list.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(second.outputPath, "utf8");
+    assert.equal((html.match(/<ul class="mdv-block mdv-list"/g) ?? []).length, 1);
+    assert.equal((html.match(/>Alpha<\/p>/g) ?? []).length, 1);
+    assert.equal((html.match(/>Omega<\/p>/g) ?? []).length, 1);
+    assert.match(html, /<li data-diff-kind="removed"[^>]*>.*削除項目: <\/span><p[^>]*>Before<\/p><\/li>/);
+    assert.match(html, /<li data-diff-kind="added"[^>]*>.*追加項目: <\/span><p[^>]*>After<\/p><\/li>/);
+    assert.equal((html.match(/class="mdv-list-structural-marker" aria-hidden="true">•<\/span>/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /<ul[^>]*data-diff-kind/);
+    assert.doesNotMatch(html, /<ul[^>]*data-change/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("preserves ordered-list numbering for item-level changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-ordered-list-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "ordered-list.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?ordered-list-diff=${Date.now()}`);
+    await writeFile(markdownPath, "# Steps\n\n3. Alpha\n4. Before\n5. Omega\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "lists", branch: "main", relativePath: "ordered-list.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Steps\n\n3. Alpha\n4. After\n5. Omega\n");
+    const second = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "lists", branch: "main", relativePath: "ordered-list.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(second.outputPath, "utf8");
+    assert.match(html, /<ol class="mdv-block mdv-list" start="3"[^>]*>/);
+    assert.match(html, /<li value="4" data-diff-kind="removed"[^>]*>.*Before<\/p><\/li>/);
+    assert.match(html, /<li value="4" data-diff-kind="added"[^>]*>.*After<\/p><\/li>/);
+    assert.equal((html.match(/mdv-list-structural-marker-ordered" aria-hidden="true">4[.]<\/span>/g) ?? []).length, 2);
+    assert.match(html, /<li value="5"[^>]*>.*Omega<\/p><\/li>/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
 test("renders inserted and deleted Markdown table rows inside the current table", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-table-row-set-"));
   const cache = path.join(root, "cache");
