@@ -16,8 +16,6 @@ test("loopback server serves cache files and limits file opening to trusted requ
     <div data-view="read" class="shell mdv-app">
       <button type="button" data-view-target="read" aria-pressed="true">Read</button>
       <button type="button" data-view-target="changes" aria-pressed="false">Changes</button>
-      <button type="button" data-view-target="raw" aria-pressed="false">Raw diff</button>
-      <section hidden="hidden" class="panel mdv-raw-diff">diff</section>
     </div>`);
   await writeFile(path.join(root, "repo", "page.md"), "# Page\n");
   await writeFile(path.join(root, "secret.txt"), "secret");
@@ -87,13 +85,10 @@ test("loopback server serves cache files and limits file opening to trusted requ
     assert.match(changesHtml, /data-view="changes" class="shell mdv-app"/);
     assert.match(changesHtml, /data-view-target="read" aria-pressed="false"/);
     assert.match(changesHtml, /data-view-target="changes" aria-pressed="true"/);
-    assert.match(changesHtml, /hidden="" class="panel mdv-raw-diff"/);
-
     const rawPage = await fetch(`http://127.0.0.1:${port}/documents/page.html?view=raw`);
     const rawHtml = await rawPage.text();
-    assert.match(rawHtml, /data-view="raw" class="shell mdv-app"/);
-    assert.match(rawHtml, /data-view-target="raw" aria-pressed="true"/);
-    assert.doesNotMatch(rawHtml, /<section[^>]*\shidden(?:\s|=|>)/);
+    assert.match(rawHtml, /data-view="read" class="shell mdv-app"/);
+    assert.doesNotMatch(rawHtml, /data-view="raw"|data-view-target="raw"|mdv-raw-diff|Raw diff/);
 
     const writeAttempt = await fetch(`http://127.0.0.1:${port}/documents/page.html`, { method: "POST" });
     assert.equal(writeAttempt.status, 405);

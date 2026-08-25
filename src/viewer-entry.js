@@ -1,5 +1,4 @@
 const app = document.querySelector(".mdv-app");
-const rawDiff = document.querySelector(".mdv-raw-diff");
 const headings = [...document.querySelectorAll('.mdv-heading[id]:not([data-diff-kind="removed"])')];
 const tocLinks = [...document.querySelectorAll(".mdv-toc a")];
 const documentId = app?.dataset.documentId || "";
@@ -122,7 +121,6 @@ else loadHistory();
 
 function setView(view) {
   app.dataset.view = view;
-  rawDiff.hidden = view !== "raw";
   for (const button of document.querySelectorAll("[data-view-target]")) {
     button.setAttribute("aria-pressed", String(button.dataset.viewTarget === view));
   }
@@ -276,8 +274,6 @@ document.addEventListener("keydown", (event) => {
     "1": "read",
     c: "changes",
     "2": "changes",
-    d: "raw",
-    "3": "raw",
   };
   const view = viewShortcuts[event.key.toLowerCase()];
   if (view && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !isEditableTarget(event.target)) {
@@ -1029,7 +1025,7 @@ function restoreRevisionNavigation() {
     return;
   }
   if (!saved || typeof saved !== "object") return;
-  if (["read", "changes", "raw"].includes(saved.view)) setView(saved.view);
+  if (["read", "changes"].includes(saved.view)) setView(saved.view);
   if (!location.hash && Number.isFinite(saved.scrollRatio)) {
     requestAnimationFrame(() => {
       const scrollRange = Math.max(document.documentElement.scrollHeight - innerHeight, 0);
@@ -1040,7 +1036,7 @@ function restoreRevisionNavigation() {
 
 function restoreRequestedView() {
   const requested = new URLSearchParams(location.search).get("view");
-  if (["read", "changes", "raw"].includes(requested)) setView(requested);
+  if (["read", "changes"].includes(requested)) setView(requested);
 }
 
 function formatHistoryTimestamp(value) {

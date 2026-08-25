@@ -207,8 +207,6 @@
   .mdv-diagram-loading { color: var(--mdv-muted); font-size: 13px; }
   .mdv-diagram-error { color: #d6ad58; font-size: 13px; }
   .mdv-diagram-source { margin: 0; padding: 18px; overflow: auto; border-top: 1px solid var(--mdv-border); color: #c6c8c3; font: 13px/1.6 var(--mdv-font-mono); }
-  .mdv-raw-diff { width: min(1120px, calc(100vw - var(--mdv-sidebar) - 70px)); margin: 34px auto 110px; }
-  .mdv-raw-diff pre { padding: 24px; overflow: auto; border: 1px solid var(--mdv-border); background: #151615; color: #cfd1cc; font: 13px/1.65 var(--mdv-font-mono); }
 }
 
 @layer states {
@@ -231,8 +229,6 @@
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="removed"] { --mdv-diff-color: var(--mdv-removed); --mdv-diff-bg: var(--mdv-removed-bg); }
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="added"] { --mdv-diff-color: var(--mdv-added); --mdv-diff-bg: var(--mdv-added-bg); }
   .mdv-app[data-view="changes"] .mdv-heading[data-diff-kind]::after { display: none; }
-  .mdv-app[data-view="raw"] .mdv-document { display: none; }
-  .mdv-app[data-view="raw"] .mdv-raw-diff { display: block; }
   .mdv-app.toc-hidden { grid-template-columns: 0 minmax(0, 1fr); }
   .mdv-app.toc-hidden .mdv-sidebar { transform: translateX(-100%); visibility: hidden; }
   .mdv-app.toc-hidden .mdv-reviewbar { grid-template-columns: 0 minmax(0, 1fr); }
@@ -261,7 +257,6 @@
     .mdv-app:not(.toc-hidden) .mdv-sidebar-scrim { position: fixed; z-index: 24; inset: var(--mdv-topbar) 0 var(--mdv-reviewbar) var(--mdv-sidebar); display: block; background: rgba(0,0,0,.56); }
     .mdv-main { grid-column: 2; }
     .mdv-document { width: 100%; padding: 40px 22px 100px 38px; }
-    .mdv-raw-diff { width: calc(100% - 24px); margin: 20px 12px 90px; }
     .mdv-document-body > .mdv-block[data-change="modified"]::before { left: -14px; }
     .mdv-reviewbar { grid-template-columns: 1fr; padding: 0 12px; }
     .mdv-history-nav { grid-column: 1; gap: 3px; }

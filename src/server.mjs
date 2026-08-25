@@ -239,7 +239,7 @@ export async function startServer(options = {}) {
 }
 
 function isReaderView(view) {
-  return view === "read" || view === "changes" || view === "raw";
+  return view === "read" || view === "changes";
 }
 
 function applyInitialView(html, view) {
@@ -252,9 +252,6 @@ function applyInitialView(html, view) {
     if (tag.startsWith("<button")) {
       const target = htmlAttribute(tag, "data-view-target");
       if (isReaderView(target)) return setHtmlAttribute(tag, "aria-pressed", String(target === view));
-    }
-    if (tag.startsWith("<section") && hasClass(tag, "mdv-raw-diff")) {
-      return view === "raw" ? removeHtmlAttribute(tag, "hidden") : setHtmlAttribute(tag, "hidden", "");
     }
     return tag;
   });

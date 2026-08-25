@@ -24,6 +24,8 @@ In the reading view, preserve Markdown's structural markers such as list bullets
 
 Treat the selected worktree as the primary browsing scope. Select or fix the worktree before file search, and limit the sidebar and file search results to Markdown in that worktree; do not mix same-named files from other worktrees into those results.
 
+Expose only `Read` and `Changes` as reader view modes. Do not add a user-facing raw/row diff view or shortcut.
+
 Use `Cmd+Shift+K` for a dedicated worktree selection palette. Keep `Cmd+K` and `/` scoped to Markdown search inside the selected worktree.
 
 In the reading view, navigate worktree-wide Codex turn revisions instead of jumping between changed blocks. Use `N` for the next worktree revision and `P` for the previous worktree revision, preserve the selected file when it exists at the destination, and use a restrained history cursor that helps readers follow Codex editing history.
