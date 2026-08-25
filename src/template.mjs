@@ -42,12 +42,6 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
     ? `<aside class="mdv-sidebar" aria-label="ワークツリーの文書">
       <div class="mdv-sidebar-head">
         <button type="button" data-action="toggle-toc" aria-label="サイドバーを閉じる">${icon("alt-arrow-left-linear")}</button>
-        <label class="mdv-worktree-picker">
-          <span><b>Worktree</b><kbd>⌘⇧K</kbd></span>
-          <select data-workspace-select aria-label="ワークツリーを選択" disabled>
-            <option value="${escape(meta.workspaceId)}">${escape(meta.worktree ?? meta.repo)}</option>
-          </select>
-        </label>
         <div class="mdv-sidebar-tabs" role="tablist" aria-label="サイドバー表示">
           <button type="button" role="tab" data-sidebar-target="files" aria-selected="true">Files</button>
           <button type="button" role="tab" data-sidebar-target="outline" aria-selected="false">Outline</button>

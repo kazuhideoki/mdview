@@ -20,7 +20,6 @@ const workspacePaletteResults = document.querySelector("#mdv-workspace-palette-r
 const workspacePaletteStatus = document.querySelector("#mdv-workspace-palette-status");
 const workspaceFiles = document.querySelector("[data-workspace-files]");
 const workspaceFilesStatus = document.querySelector("[data-workspace-files-status]");
-const workspaceSelect = document.querySelector("[data-workspace-select]");
 const searchState = {
   entries: [],
   matches: [],
@@ -62,12 +61,6 @@ for (const input of document.querySelectorAll("[data-setting]")) {
 for (const button of document.querySelectorAll("[data-sidebar-target]")) {
   button.addEventListener("click", () => setSidebarPanel(button.dataset.sidebarTarget));
 }
-
-workspaceSelect?.addEventListener("change", () => {
-  const selected = workspaceState.workspaces.find((workspace) => workspace.id === workspaceSelect.value);
-  const href = safeReaderHref(selected?.href);
-  if (href) navigateToReaderHref(href);
-});
 
 searchInput?.addEventListener("input", updateSearchResults);
 searchOverlay?.addEventListener("click", (event) => {
@@ -126,7 +119,6 @@ observeHeadings();
 renderDiagrams();
 if (workspaceId && workspaceRevisionId) loadWorkspaceContext();
 else loadHistory();
-loadWorkspaceOptions();
 
 function setView(view) {
   app.dataset.view = view;
@@ -519,7 +511,7 @@ function closeWorkspacePalette() {
   workspacePaletteInput?.removeAttribute("aria-activedescendant");
   const restoreTarget = workspacePaletteState.restoreFocus?.isConnected
     ? workspacePaletteState.restoreFocus
-    : workspaceSelect;
+    : null;
   workspacePaletteState.restoreFocus = null;
   restoreTarget?.focus();
 }
@@ -795,15 +787,6 @@ async function ensureWorkspaceDetails(signal) {
   return operation;
 }
 
-async function loadWorkspaceOptions() {
-  try {
-    await ensureWorkspaceOptions();
-  } catch (error) {
-    if (workspaceSelect) workspaceSelect.disabled = true;
-    console.error("mdview: worktree list fetch failed", error);
-  }
-}
-
 async function ensureWorkspaceOptions() {
   if (workspaceState.optionsLoaded) return workspaceState.workspaces;
   if (workspaceState.optionsLoading) return workspaceState.optionsLoading;
@@ -815,24 +798,6 @@ async function ensureWorkspaceOptions() {
     const payload = await response.json();
     workspaceState.workspaces = Array.isArray(payload) ? payload.map(normalizeWorkspaceSummary).filter(Boolean) : [];
     workspaceState.optionsLoaded = true;
-    if (workspaceSelect) {
-      workspaceSelect.replaceChildren();
-      for (const workspace of workspaceState.workspaces) {
-        const option = document.createElement("option");
-        option.value = workspace.id;
-        option.textContent = `${workspace.repo} / ${workspace.worktree}`;
-        option.selected = workspace.id === workspaceId;
-        workspaceSelect.append(option);
-      }
-      if (!workspaceState.workspaces.some((workspace) => workspace.id === workspaceId)) {
-        const option = document.createElement("option");
-        option.value = workspaceId;
-        option.textContent = app?.dataset.currentWorktree || app?.dataset.currentRepo || "Current worktree";
-        option.selected = true;
-        workspaceSelect.prepend(option);
-      }
-      workspaceSelect.disabled = workspaceState.workspaces.length < 2;
-    }
     return workspaceState.workspaces;
   }).finally(() => {
     workspaceState.optionsLoading = null;
