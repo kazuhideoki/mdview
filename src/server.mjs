@@ -13,6 +13,7 @@ import { documentMeta } from "./document.mjs";
 import { cacheRoot, logPath, runtimeRoot, serverPort } from "./paths.mjs";
 import { renderHistoryRevision, renderMarkdownFile, renderWorkspaceRevision } from "./renderer.mjs";
 import { readWorkspaceLineage } from "./repository-lineage.mjs";
+import { reconcileWorkspaceHistory } from "./repository-sync.mjs";
 import { resolveCodexSessionTitle } from "./codex-context.mjs";
 import {
   readWorkspaceHistories,
@@ -34,6 +35,7 @@ const CONTENT_TYPES = new Map([
 ]);
 const PROTOCOL_VERSION = 8;
 const followRenders = new Map();
+const workspaceReconciliations = new Map();
 const execFileAsync = promisify(execFile);
 
 export async function startServer(options = {}) {
@@ -503,6 +505,13 @@ function projectHistoryRevision(revision, options = {}) {
 }
 
 async function workspaceDetails(request, response, requestUrl, workspaceId, options) {
+  const reconcileWorkspace = options.reconcileWorkspace || reconcileWorkspaceHistory;
+  let reconcileWarning = null;
+  try {
+    await reconcileWorkspaceOnce(workspaceId, reconcileWorkspace);
+  } catch {
+    reconcileWarning = { workspaceId, code: "repository-sync-failed" };
+  }
   const workspace = await readWorkspaceHistory(workspaceId);
   if (!workspace.root || workspace.revisions.length === 0) return respond(response, 404, "Not Found");
   const requestedRevisionId = requestUrl.searchParams.get("revision") || workspace.revisions.at(-1).id;
@@ -544,7 +553,7 @@ async function workspaceDetails(request, response, requestUrl, workspaceId, opti
     workspaceId,
     revisionId: revision.id,
     lineageWorkspaceId,
-    lineageWarnings: lineage.warnings,
+    lineageWarnings: reconcileWarning ? [...lineage.warnings, reconcileWarning] : lineage.warnings,
     meta: revision.meta,
     files,
     revisions,
@@ -554,6 +563,16 @@ async function workspaceDetails(request, response, requestUrl, workspaceId, opti
     "cache-control": "no-store",
     "content-length": Buffer.byteLength(body),
   });
+}
+
+async function reconcileWorkspaceOnce(workspaceId, reconcileWorkspace) {
+  if (!workspaceReconciliations.has(workspaceId)) {
+    const operation = Promise.resolve()
+      .then(() => reconcileWorkspace(workspaceId))
+      .finally(() => workspaceReconciliations.delete(workspaceId));
+    workspaceReconciliations.set(workspaceId, operation);
+  }
+  return workspaceReconciliations.get(workspaceId);
 }
 
 function projectWorkspaceSummary(workspace) {

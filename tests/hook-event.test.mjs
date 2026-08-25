@@ -105,6 +105,22 @@ test("a Stop without a prompt establishes a baseline without reporting every doc
   assert.equal(await readHistorySnapshot(workspaceHistory.revisions[0].files["README.md"], { root: historyRoot }), "existing\n");
 });
 
+test("a Stop asks repository sync to update the primary worktree", async (t) => {
+  const { cwd, stateDir, historyRoot } = await fixture(t);
+  await writeFile(path.join(cwd, "README.md"), "existing\n");
+  const calls = [];
+  const result = await processHookEvent(payload(cwd, "Stop"), {
+    stateDir,
+    historyRoot,
+    reconcilePrimaryWorkspace: async (sourceRoot) => {
+      calls.push(sourceRoot);
+      return { action: "reconciled", added: true, revision: { id: "a".repeat(24) } };
+    },
+  });
+  assert.deepEqual(calls, [cwd]);
+  assert.equal(result.repositorySync.action, "reconciled");
+});
+
 test("a new session records changes that arrived before its prompt against the prior workspace revision", async (t) => {
   const { cwd, stateDir, historyRoot } = await fixture(t);
   const markdownPath = path.join(cwd, "README.md");

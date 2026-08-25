@@ -106,7 +106,7 @@ test("Git ancestry never imports a candidate whose Markdown snapshot is absent f
   const options = { root: historyRoot };
   const main = await revision(mainRoot, "2026-08-16T09:00:00.000Z", "main-session", "turn-1", hash("a"), [], options);
   const feature = await revision(featureRoot, "2026-08-16T10:00:00.000Z", "feature-session", "turn-1", hash("b"), [], options);
-  const featureCommit = "b".repeat(40);
+  const featureCommit = "c".repeat(40);
   feature.manifest.revisions[0].meta.commit = featureCommit;
   const firstParent = "a".repeat(40);
   const secondParent = "c".repeat(40);
@@ -146,13 +146,13 @@ test("Git ancestry records provenance when the merged Markdown snapshot is alrea
     destination: main.manifest,
     destinationRoot: mainRoot,
     currentFiles: { "README.md": hash("b") },
-    currentMeta: { repositoryId, commit: "d".repeat(40), parents: ["a".repeat(40), "c".repeat(40)] },
+    currentMeta: { repositoryId, commit: "d".repeat(40), parents: ["a".repeat(40), featureCommit] },
     renderedAt: "2026-08-16T11:00:00.000Z",
   }, {
     ...options,
     histories: [main.manifest, feature.manifest],
     execFile: async (_command, args) => {
-      if (args.at(-1) === "c".repeat(40)) return { stdout: "" };
+      if (args.at(-1) === featureCommit) return { stdout: "" };
       const error = new Error("not an ancestor");
       error.code = 1;
       throw error;
@@ -188,6 +188,114 @@ test("identical snapshot candidates are not guessed without unique Git ancestry"
   });
 
   assert.deepEqual(sources, []);
+});
+
+test("a unique merged-parent candidate disambiguates identical ancestor snapshots", async (t) => {
+  const historyRoot = await mkdtemp(path.join(os.tmpdir(), "mdview-lineage-richest-"));
+  t.after(() => rm(historyRoot, { recursive: true, force: true }));
+  const mainRoot = path.join(historyRoot, "main");
+  const featureRoot = path.join(historyRoot, "feature");
+  const integrationRoot = path.join(historyRoot, "integration");
+  const duplicateRoot = path.join(historyRoot, "duplicate");
+  const options = { root: historyRoot };
+  const main = await revision(mainRoot, "2026-08-16T09:00:00.000Z", "main", "turn-1", hash("a"), [], options);
+  const feature = await revision(featureRoot, "2026-08-16T10:00:00.000Z", "feature", "turn-1", hash("b"), [], options);
+  const integration = await revision(integrationRoot, "2026-08-16T10:30:00.000Z", "integration", "turn-1", hash("b"), [{
+    workspaceId: feature.manifest.workspaceId,
+    throughRevisionId: feature.revision.id,
+    reason: "git-ancestry",
+  }], options);
+  const duplicate = await revision(duplicateRoot, "2026-08-16T10:45:00.000Z", "duplicate", "turn-1", hash("b"), [], options);
+  integration.manifest.revisions[0].meta.commit = "b".repeat(40);
+  duplicate.manifest.revisions[0].meta.commit = "e".repeat(40);
+
+  const secondParent = "b".repeat(40);
+  const sources = await discoverMergeSources({
+    destination: main.manifest,
+    destinationRoot: mainRoot,
+    currentFiles: { "README.md": hash("b") },
+    currentMeta: { repositoryId, commit: "d".repeat(40), parents: ["a".repeat(40), secondParent] },
+    renderedAt: "2026-08-16T11:00:00.000Z",
+  }, {
+    ...options,
+    histories: [main.manifest, integration.manifest, duplicate.manifest],
+    execFile: async (_command, args) => {
+      const ancestor = args.at(-2);
+      const descendant = args.at(-1);
+      if (ancestor === "b".repeat(40) && descendant === secondParent) return { stdout: "" };
+      if (ancestor === "e".repeat(40) && descendant === "d".repeat(40)) return { stdout: "" };
+      throw new Error("not an ancestor");
+    },
+  });
+
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].workspaceId, integration.manifest.workspaceId);
+  assert.equal(sources[0].throughRevisionId, integration.revision.id);
+});
+
+test("identical merged-parent candidates remain ambiguous", async (t) => {
+  const historyRoot = await mkdtemp(path.join(os.tmpdir(), "mdview-lineage-parent-ambiguous-"));
+  t.after(() => rm(historyRoot, { recursive: true, force: true }));
+  const mainRoot = path.join(historyRoot, "main");
+  const leftRoot = path.join(historyRoot, "left");
+  const rightRoot = path.join(historyRoot, "right");
+  const options = { root: historyRoot };
+  const main = await revision(mainRoot, "2026-08-16T09:00:00.000Z", "main", "turn-1", hash("a"), [], options);
+  const left = await revision(leftRoot, "2026-08-16T10:00:00.000Z", "left", "turn-1", hash("b"), [], options);
+  const right = await revision(rightRoot, "2026-08-16T10:30:00.000Z", "right", "turn-1", hash("b"), [], options);
+  left.manifest.revisions[0].meta.commit = "b".repeat(40);
+  right.manifest.revisions[0].meta.commit = "b".repeat(40);
+
+  const secondParent = "b".repeat(40);
+  const sources = await discoverMergeSources({
+    destination: main.manifest,
+    destinationRoot: mainRoot,
+    currentFiles: { "README.md": hash("b") },
+    currentMeta: { repositoryId, commit: "d".repeat(40), parents: ["a".repeat(40), secondParent] },
+    renderedAt: "2026-08-16T11:00:00.000Z",
+  }, {
+    ...options,
+    histories: [main.manifest, left.manifest, right.manifest],
+    execFile: async (_command, args) => {
+      if (args.at(-2) === secondParent && args.at(-1) === secondParent) return { stdout: "" };
+      throw new Error("not an ancestor");
+    },
+  });
+
+  assert.deepEqual(sources, []);
+});
+
+test("merge discovery walks back past a newer unmerged source revision", async (t) => {
+  const historyRoot = await mkdtemp(path.join(os.tmpdir(), "mdview-lineage-walk-back-"));
+  t.after(() => rm(historyRoot, { recursive: true, force: true }));
+  const mainRoot = path.join(historyRoot, "main");
+  const featureRoot = path.join(historyRoot, "feature");
+  const options = { root: historyRoot };
+  const main = await revision(mainRoot, "2026-08-16T09:00:00.000Z", "main", "turn-1", hash("a"), [], options);
+  const merged = await revision(featureRoot, "2026-08-16T10:00:00.000Z", "feature", "turn-1", hash("b"), [], options);
+  const unmerged = await revision(featureRoot, "2026-08-16T10:30:00.000Z", "feature", "turn-2", hash("c"), [], options);
+  merged.manifest.revisions[0].meta.commit = "b".repeat(40);
+  unmerged.manifest.revisions[0].meta.commit = "b".repeat(40);
+  unmerged.manifest.revisions[1].meta.commit = "c".repeat(40);
+
+  const secondParent = "b".repeat(40);
+  const sources = await discoverMergeSources({
+    destination: main.manifest,
+    destinationRoot: mainRoot,
+    currentFiles: { "README.md": hash("b") },
+    currentMeta: { repositoryId, commit: "d".repeat(40), parents: ["a".repeat(40), secondParent] },
+    renderedAt: "2026-08-16T11:00:00.000Z",
+  }, {
+    ...options,
+    histories: [main.manifest, unmerged.manifest],
+    execFile: async (_command, args) => {
+      if (args.at(-2) === secondParent && args.at(-1) === secondParent) return { stdout: "" };
+      throw new Error("not an ancestor");
+    },
+  });
+
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].throughRevisionId, merged.revision.id);
 });
 
 test("lineage skips corrupt and cross-repository source manifests with warnings", async (t) => {
