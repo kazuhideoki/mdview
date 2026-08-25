@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { changedLinesFromPatch, lineChangesFromPatch } from "../src/document.mjs";
+import { changedLinesFromPatch, lineChangesFromPatch, parseMarkdown } from "../src/document.mjs";
+import { renderDocument } from "../src/render-document.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -58,6 +59,18 @@ test("changed line parsing excludes unchanged diff context", () => {
   });
 });
 
+test("outline candidate filtering excludes headings inside removed compound blocks", async () => {
+  const rendered = await renderDocument(parseMarkdown("> ## Deleted nested heading\n"), {
+    diffLines: [1],
+    diffKind: "removed",
+  });
+  assert.match(rendered.html, /<blockquote[^>]+data-diff-kind="removed"[^>]*><h2[^>]+class="mdv-heading"/);
+  assert.doesNotMatch(rendered.html, /<h2[^>]+data-diff-kind="removed"/);
+
+  const viewerSource = await readFile(new URL("../src/viewer-entry.js", import.meta.url), "utf8");
+  assert.match(viewerSource, /heading[.]closest\('\[data-diff-kind="removed"\]'\)/);
+});
+
 test("renders unique heading ids, GFM, highlighted code, and relative images outside the repo", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-"));
   const cache = path.join(root, "cache");
@@ -95,6 +108,10 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.doesNotMatch(html, /data-view-target="raw"|mdv-raw-diff|Raw diff/);
     assert.match(html, /id="mdv-workspace-palette-dialog"[^>]+aria-labelledby="mdv-workspace-palette-title"/);
     assert.match(html, /aria-label="ワークツリーを検索"/);
+    assert.match(html, /id="mdv-outline-palette-dialog"[^>]+aria-labelledby="mdv-outline-palette-title"/);
+    assert.match(html, /aria-label="現在の文書の見出しを検索"[^>]+aria-keyshortcuts="Meta\+Shift\+O Control\+Shift\+O"/);
+    assert.match(html, /id="icon-list-linear"/);
+    assert.match(html, /href="#icon-list-linear"/);
     assert.match(html, /id="mdv-shortcuts-dialog"[^>]+aria-labelledby="mdv-shortcuts-title"[^>]+aria-keyshortcuts="[?]"/);
     const shortcutsHtml = html.slice(html.indexOf('class="mdv-shortcuts-dialog"'), html.indexOf('class="mdv-toast"'));
     assert.match(shortcutsHtml, /Keyboard shortcuts/);
@@ -102,6 +119,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.match(shortcutsHtml, /Read/);
     assert.match(shortcutsHtml, /Changes/);
     assert.match(shortcutsHtml, /ワークツリーを選択/);
+    assert.match(shortcutsHtml, /アウトラインを表示/);
     assert.doesNotMatch(shortcutsHtml, /Raw diff/);
     assert.doesNotMatch(shortcutsHtml, /表示ボタン選択中/);
     assert.doesNotMatch(html, /data-workspace-files|id="mdv-search-dialog"|data-action="open-search"/);

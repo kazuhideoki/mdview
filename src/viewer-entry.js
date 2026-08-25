@@ -1,5 +1,6 @@
 const app = document.querySelector(".mdv-app");
-const headings = [...document.querySelectorAll('.mdv-heading[id]:not([data-diff-kind="removed"])')];
+const headings = [...document.querySelectorAll(".mdv-heading[id]")]
+  .filter((heading) => !heading.closest('[data-diff-kind="removed"]'));
 const tocLinks = [...document.querySelectorAll(".mdv-toc a")];
 const documentId = app?.dataset.documentId || "";
 const revisionId = app?.dataset.revisionId || "";
@@ -17,6 +18,10 @@ const workspacePaletteOverlay = document.querySelector("[data-workspace-palette-
 const workspacePaletteInput = document.querySelector("#mdv-workspace-palette-input");
 const workspacePaletteResults = document.querySelector("#mdv-workspace-palette-results");
 const workspacePaletteStatus = document.querySelector("#mdv-workspace-palette-status");
+const outlinePaletteOverlay = document.querySelector("[data-outline-palette-overlay]");
+const outlinePaletteInput = document.querySelector("#mdv-outline-palette-input");
+const outlinePaletteResults = document.querySelector("#mdv-outline-palette-results");
+const outlinePaletteStatus = document.querySelector("#mdv-outline-palette-status");
 const shortcutsOverlay = document.querySelector("[data-shortcuts-overlay]");
 const shortcutsDialog = document.querySelector("#mdv-shortcuts-dialog");
 const workspaceFiles = document.querySelector("[data-workspace-files]");
@@ -29,6 +34,17 @@ const searchState = {
   restoreFocus: null,
 };
 const workspacePaletteState = {
+  matches: [],
+  activeIndex: -1,
+  restoreFocus: null,
+};
+const outlinePaletteState = {
+  entries: headings.map((heading, index) => ({
+    id: heading.id,
+    title: heading.textContent?.trim() || heading.id,
+    depth: Number(heading.tagName.slice(1)) || 1,
+    index,
+  })),
   matches: [],
   activeIndex: -1,
   restoreFocus: null,
@@ -100,6 +116,23 @@ workspacePaletteResults?.addEventListener("click", (event) => {
   setActiveWorkspaceResult(Number(option.dataset.resultIndex), false);
   openSelectedWorkspace();
 });
+outlinePaletteInput?.addEventListener("input", updateOutlinePaletteResults);
+outlinePaletteOverlay?.addEventListener("click", (event) => {
+  if (event.target === outlinePaletteOverlay) closeOutlinePalette();
+});
+outlinePaletteResults?.addEventListener("mousemove", (event) => {
+  const option = event.target.closest("[role='option']");
+  if (option) setActiveOutlineResult(Number(option.dataset.resultIndex), false);
+});
+outlinePaletteResults?.addEventListener("mousedown", (event) => {
+  if (event.target.closest("[role='option']")) event.preventDefault();
+});
+outlinePaletteResults?.addEventListener("click", (event) => {
+  const option = event.target.closest("[role='option']");
+  if (!option) return;
+  setActiveOutlineResult(Number(option.dataset.resultIndex), false);
+  openSelectedOutlineResult();
+});
 shortcutsOverlay?.addEventListener("click", (event) => {
   if (event.target === shortcutsOverlay) closeShortcuts();
 });
@@ -164,6 +197,9 @@ async function runAction(button) {
     case "close-workspace-palette":
       closeWorkspacePalette();
       break;
+    case "close-outline-palette":
+      closeOutlinePalette();
+      break;
     case "close-shortcuts":
       closeShortcuts();
       break;
@@ -195,6 +231,18 @@ async function runAction(button) {
 }
 
 document.addEventListener("keydown", (event) => {
+  const commandShiftO = (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === "o";
+  if (commandShiftO) {
+    event.preventDefault();
+    closeShortcuts();
+    if (isOutlinePaletteOpen()) closeOutlinePalette();
+    else {
+      closeSearch();
+      closeWorkspacePalette();
+      openOutlinePalette();
+    }
+    return;
+  }
   const commandK = (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k";
   if (commandK && event.shiftKey) {
     event.preventDefault();
@@ -202,6 +250,7 @@ document.addEventListener("keydown", (event) => {
     if (isWorkspacePaletteOpen()) closeWorkspacePalette();
     else {
       closeSearch();
+      closeOutlinePalette();
       openWorkspacePalette();
     }
     return;
@@ -212,6 +261,7 @@ document.addEventListener("keydown", (event) => {
     if (isSearchOpen()) closeSearch();
     else {
       closeWorkspacePalette();
+      closeOutlinePalette();
       openSearch();
     }
     return;
@@ -255,6 +305,33 @@ document.addEventListener("keydown", (event) => {
       }
     }
     if (event.key === "Tab") trapPaletteFocus(workspacePaletteOverlay, event);
+    return;
+  }
+
+  if (isOutlinePaletteOpen()) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeOutlinePalette();
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveOutlineSelection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter" && !event.isComposing) {
+      if (event.target.closest?.('[data-action="close-outline-palette"]')) {
+        event.preventDefault();
+        closeOutlinePalette();
+        return;
+      }
+      if (event.target === outlinePaletteInput) {
+        event.preventDefault();
+        openSelectedOutlineResult();
+        return;
+      }
+    }
+    if (event.key === "Tab") trapPaletteFocus(outlinePaletteOverlay, event);
     return;
   }
 
@@ -549,6 +626,129 @@ function closeWorkspacePalette() {
 
 function isWorkspacePaletteOpen() {
   return Boolean(workspacePaletteOverlay && !workspacePaletteOverlay.hidden);
+}
+
+function openOutlinePalette() {
+  if (!outlinePaletteOverlay || !outlinePaletteInput || !outlinePaletteResults || !outlinePaletteStatus || isOutlinePaletteOpen()) return;
+  outlinePaletteState.restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  outlinePaletteOverlay.hidden = false;
+  setPaletteBackgroundInert(outlinePaletteOverlay, true);
+  document.body.classList.add("mdv-search-open");
+  outlinePaletteInput.setAttribute("aria-expanded", "true");
+  outlinePaletteInput.value = "";
+  outlinePaletteState.matches = [];
+  outlinePaletteState.activeIndex = -1;
+  updateOutlinePaletteResults();
+  requestAnimationFrame(() => outlinePaletteInput.focus());
+}
+
+function closeOutlinePalette({ restoreFocus = true } = {}) {
+  if (!outlinePaletteOverlay || outlinePaletteOverlay.hidden) return;
+  outlinePaletteOverlay.hidden = true;
+  setPaletteBackgroundInert(outlinePaletteOverlay, false);
+  document.body.classList.remove("mdv-search-open");
+  outlinePaletteInput?.setAttribute("aria-expanded", "false");
+  outlinePaletteInput?.removeAttribute("aria-activedescendant");
+  const restoreTarget = restoreFocus && outlinePaletteState.restoreFocus?.isConnected
+    ? outlinePaletteState.restoreFocus
+    : null;
+  outlinePaletteState.restoreFocus = null;
+  restoreTarget?.focus();
+}
+
+function isOutlinePaletteOpen() {
+  return Boolean(outlinePaletteOverlay && !outlinePaletteOverlay.hidden);
+}
+
+function updateOutlinePaletteResults() {
+  if (!outlinePaletteResults || !outlinePaletteInput || !outlinePaletteStatus) return;
+  const query = outlinePaletteInput.value.trim();
+  outlinePaletteState.matches = rankOutline(outlinePaletteState.entries, query);
+  outlinePaletteResults.replaceChildren();
+
+  for (const [index, entry] of outlinePaletteState.matches.entries()) {
+    const option = document.createElement("li");
+    option.id = `mdv-outline-option-${index}`;
+    option.className = `mdv-search-option mdv-outline-option depth-${entry.depth}`;
+    option.dataset.resultIndex = String(index);
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", "false");
+
+    const marker = document.createElement("span");
+    marker.className = "mdv-outline-marker";
+    marker.textContent = "#".repeat(entry.depth);
+    marker.setAttribute("aria-hidden", "true");
+    const title = document.createElement("strong");
+    title.textContent = entry.title;
+    option.append(marker, title);
+    outlinePaletteResults.append(option);
+  }
+
+  if (!outlinePaletteState.entries.length) {
+    outlinePaletteState.activeIndex = -1;
+    outlinePaletteInput.removeAttribute("aria-activedescendant");
+    setOutlinePaletteStatus("この文書には見出しがありません。", "empty");
+  } else if (!outlinePaletteState.matches.length) {
+    outlinePaletteState.activeIndex = -1;
+    outlinePaletteInput.removeAttribute("aria-activedescendant");
+    setOutlinePaletteStatus(`「${query}」に一致する見出しはありません。`, "empty");
+  } else {
+    setActiveOutlineResult(0, false);
+    setOutlinePaletteStatus(`${outlinePaletteState.matches.length} 件の見出し`, "ready");
+  }
+}
+
+function setOutlinePaletteStatus(message, state) {
+  outlinePaletteStatus.textContent = message;
+  outlinePaletteStatus.dataset.state = state;
+}
+
+function setActiveOutlineResult(index, scroll = true) {
+  if (!outlinePaletteInput || !outlinePaletteResults || !outlinePaletteState.matches.length || !Number.isFinite(index)) return;
+  outlinePaletteState.activeIndex = (index + outlinePaletteState.matches.length) % outlinePaletteState.matches.length;
+  for (const [optionIndex, option] of [...outlinePaletteResults.children].entries()) {
+    const selected = optionIndex === outlinePaletteState.activeIndex;
+    option.classList.toggle("is-active", selected);
+    option.setAttribute("aria-selected", String(selected));
+    if (selected && scroll) option.scrollIntoView({ block: "nearest" });
+  }
+  outlinePaletteInput.setAttribute("aria-activedescendant", `mdv-outline-option-${outlinePaletteState.activeIndex}`);
+}
+
+function moveOutlineSelection(direction) {
+  if (!outlinePaletteState.matches.length) return;
+  setActiveOutlineResult(outlinePaletteState.activeIndex + direction);
+}
+
+function openSelectedOutlineResult() {
+  const entry = outlinePaletteState.matches[outlinePaletteState.activeIndex];
+  if (!entry) return;
+  const heading = document.getElementById(entry.id);
+  if (!heading) return;
+  closeOutlinePalette({ restoreFocus: false });
+  history.pushState(null, "", `#${encodeURIComponent(entry.id)}`);
+  requestAnimationFrame(() => {
+    const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    heading.scrollIntoView({ block: "start", behavior });
+    heading.setAttribute("tabindex", "-1");
+    heading.focus({ preventScroll: true });
+  });
+}
+
+function rankOutline(entries, query) {
+  const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (!terms.length) return [...entries];
+  return entries.map((entry) => {
+    let score = 0;
+    for (const term of terms) {
+      const fieldScore = fuzzyFieldScore(entry.title, term, 80);
+      if (!Number.isFinite(fieldScore)) return { entry, score: Number.NEGATIVE_INFINITY };
+      score += fieldScore;
+    }
+    return { entry, score };
+  }).filter(({ score }) => Number.isFinite(score))
+    .sort((left, right) => right.score - left.score || left.entry.index - right.entry.index)
+    .map(({ entry }) => entry);
 }
 
 function openShortcuts() {

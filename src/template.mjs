@@ -106,6 +106,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
             <h3>文書・ワークツリーを探す</h3>
             <dl>
               ${documentSearchShortcut}
+              <div><dt><kbd>⇧ ⌘ O</kbd></dt><dd>アウトラインを表示</dd></div>
               <div><dt><kbd>⇧ ⌘ K</kbd></dt><dd>ワークツリーを選択</dd></div>
             </dl>
           </section>
@@ -180,6 +181,20 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
       <label>文字サイズ <input type="range" min="15" max="20" value="17" data-setting="font-size"></label>
     </aside>
     ${documentSearchOverlay}
+    <div class="mdv-search-overlay mdv-outline-palette-overlay" data-outline-palette-overlay hidden>
+      <section class="mdv-search-dialog" id="mdv-outline-palette-dialog" role="dialog" aria-modal="true" aria-labelledby="mdv-outline-palette-title">
+        <h2 class="mdv-visually-hidden" id="mdv-outline-palette-title">現在の文書のアウトライン</h2>
+        <div class="mdv-search-input-row">
+          ${icon("list-linear")}
+          <input id="mdv-outline-palette-input" type="search" role="combobox" aria-label="現在の文書の見出しを検索" aria-autocomplete="list" aria-controls="mdv-outline-palette-results" aria-expanded="false" aria-keyshortcuts="Meta+Shift+O Control+Shift+O" autocomplete="off" spellcheck="false" placeholder="現在の文書の見出しを検索">
+          <kbd>Esc</kbd>
+          <button type="button" data-action="close-outline-palette" aria-label="アウトラインを閉じる">${icon("close-circle-linear")}</button>
+        </div>
+        <p class="mdv-search-status" id="mdv-outline-palette-status" role="status" aria-live="polite">見出しを読み込んでいます…</p>
+        <ul class="mdv-search-results mdv-outline-results" id="mdv-outline-palette-results" role="listbox" aria-label="アウトライン"></ul>
+        <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd> 選択</span><span><kbd>Enter</kbd> 移動</span><span><kbd>Esc</kbd> 閉じる</span></footer>
+      </section>
+    </div>
     <div class="mdv-search-overlay mdv-workspace-palette-overlay" data-workspace-palette-overlay hidden>
       <section class="mdv-search-dialog" id="mdv-workspace-palette-dialog" role="dialog" aria-modal="true" aria-labelledby="mdv-workspace-palette-title">
         <h2 class="mdv-visually-hidden" id="mdv-workspace-palette-title">ワークツリーを選択</h2>
