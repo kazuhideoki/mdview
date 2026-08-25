@@ -198,8 +198,8 @@ test("loopback server serves cache files and limits file opening to trusted requ
     const changedHtml = await changedPage.text();
     assert.equal(changedPage.status, 200);
     assert.match(changedHtml, /data-view="changes"/);
-    assert.match(changedHtml, /data-diff-kind="removed"[^>]*>Opened from palette<\/h1>/);
-    assert.match(changedHtml, /data-diff-kind="added"[^>]*>Changed after capture<\/h1>/);
+    assert.match(changedHtml, /data-diff-kind="removed"[^>]*><span class="mdv-inline-diff">Opened from palette<\/span><\/h1>/);
+    assert.match(changedHtml, /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">Changed after capture<\/span><\/h1>/);
     assert.doesNotMatch(changedHtml, /Not captured/);
 
     for (const [label, requestPath, status] of [
@@ -527,13 +527,13 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     assert.match(documentHtml, /data-view="changes"/);
     assert.match(documentHtml, /data-workspace-id="[a-f0-9]{24}"/);
     assert.match(documentHtml, /aria-label="このワークツリーのMarkdownを検索"/);
-    assert.match(documentHtml, /data-diff-kind="removed"[^>]*>Before[.]<\/p>/);
-    assert.match(documentHtml, /data-diff-kind="added"[^>]*>After[.]<\/p>/);
+    assert.match(documentHtml, /data-diff-kind="removed"[^>]*><span class="mdv-inline-diff">Before<\/span>[.]<\/p>/);
+    assert.match(documentHtml, /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">After<\/span>[.]<\/p>/);
 
     await unlink(path.join(runtime, "history", "objects", `${currentRevision.files["second.md"]}.md`));
     const recoveredSnapshot = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}?view=changes`);
     assert.equal(recoveredSnapshot.status, 200);
-    assert.match(await recoveredSnapshot.text(), /data-diff-kind="added"[^>]*>After[.]<\/p>/);
+    assert.match(await recoveredSnapshot.text(), /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">After<\/span>[.]<\/p>/);
 
     const firstId = workspaceDocumentId(repo, "first.md");
     const firstHref = details.files.find((file) => file.documentId === firstId).href;
@@ -547,7 +547,7 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     await writeFile(path.join(runtime, "history", "workspaces", `${workspace.workspaceId}.json`), "{broken");
     const recoveredManifest = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}`);
     assert.equal(recoveredManifest.status, 200);
-    assert.match(await recoveredManifest.text(), /After[.]/);
+    assert.match(await recoveredManifest.text(), /<span class="mdv-inline-diff">After<\/span>[.]/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

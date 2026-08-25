@@ -137,7 +137,7 @@ async function renderTableRow(row, state, header, alignments = []) {
 async function renderInline(node, state) {
   switch (node.type) {
     case "text":
-      return escape(node.value);
+      return renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges);
     case "strong":
       return `<strong>${await renderInlineChildren(node.children ?? [], state)}</strong>`;
     case "emphasis":
@@ -145,7 +145,7 @@ async function renderInline(node, state) {
     case "delete":
       return `<del>${await renderInlineChildren(node.children ?? [], state)}</del>`;
     case "inlineCode":
-      return `<code class="mdv-inline-code">${escape(node.value)}</code>`;
+      return `<code class="mdv-inline-code">${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code>`;
     case "link":
       return `<a href="${safeHref(node.url)}" rel="noreferrer">${await renderInlineChildren(node.children ?? [], state)}</a>`;
     case "image":
@@ -156,6 +156,19 @@ async function renderInline(node, state) {
       if (node.children) return renderInlineChildren(node.children, state);
       return typeof node.value === "string" ? escape(node.value) : "";
   }
+}
+
+function renderInlineDiffValue(value, ranges = []) {
+  if (ranges.length === 0) return escape(value);
+  const html = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) html.push(escape(value.slice(cursor, range.start)));
+    html.push(`<span class="mdv-inline-diff">${escape(value.slice(range.start, range.end))}</span>`);
+    cursor = range.end;
+  }
+  if (cursor < value.length) html.push(escape(value.slice(cursor)));
+  return html.join("");
 }
 
 function renderDiagram(node, changeAttr, diffAttr, sourceAttrs) {

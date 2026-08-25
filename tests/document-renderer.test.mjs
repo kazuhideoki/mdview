@@ -327,8 +327,8 @@ test("keeps prior HTML and renders revision changes against the previous snapsho
     await access(second.outputPath);
     assert.notEqual(first.outputPath, second.outputPath);
     const secondHtml = await readFile(second.outputPath, "utf8");
-    assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="removed"[^>]*>Before[.]<\/p>/);
-    assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="added"[^>]*>After[.]<\/p>/);
+    assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="removed"[^>]*><span class="mdv-inline-diff">Before<\/span>[.]<\/p>/);
+    assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="added"[^>]*><span class="mdv-inline-diff">After<\/span>[.]<\/p>/);
     assert.ok(secondHtml.indexOf('id="title"') < secondHtml.indexOf('data-diff-kind="removed"'));
     assert.ok(secondHtml.indexOf('data-diff-kind="removed"') < secondHtml.indexOf('data-diff-kind="added"'));
     assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*>Same[.]<\/p>/);
@@ -339,6 +339,100 @@ test("keeps prior HTML and renders revision changes against the previous snapsho
     const history = await readDocumentHistory(first.catalogEntry.id, { root: historyRoot });
     assert.equal(history.revisions.length, 2);
     assert.equal(history.revisions[1].beforeContentHash, history.revisions[0].contentHash);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("highlights changed words inside paired paragraph replacements", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-inline-word-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "inline.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?inline-word-diff=${Date.now()}`);
+    await writeFile(markdownPath, "# Notes\n\nDeploy to the staging environment.\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "inline.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Notes\n\nDeploy to the production environment.\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "inline.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.match(html, /data-diff-kind="removed"[^>]*>Deploy to the <span class="mdv-inline-diff">staging<\/span> environment[.]<\/p>/);
+    assert.match(html, /data-diff-kind="added"[^>]*>Deploy to the <span class="mdv-inline-diff">production<\/span> environment[.]<\/p>/);
+    const viewerCss = await readFile(new URL("../src/viewer.css", import.meta.url), "utf8");
+    assert.match(viewerCss, /data-view="changes"[^\n]+[.]mdv-inline-diff/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("does not infer inline pairs across ambiguous multi-block replacements", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-inline-ambiguous-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "ambiguous-inline.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?inline-ambiguous=${Date.now()}`);
+    await writeFile(markdownPath, "# Notes\n\nFirst legacy sentence.\n\nSecond obsolete statement.\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "ambiguous-inline.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Notes\n\nFresh replacement prose.\n\nDifferent modern wording.\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "ambiguous-inline.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.match(html, /data-diff-kind="removed"/);
+    assert.match(html, /data-diff-kind="added"/);
+    assert.doesNotMatch(html, /mdv-inline-diff/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("falls back to block highlighting when an inline comparison is unusually large", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-inline-large-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "large-inline.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?inline-large=${Date.now()}`);
+    await writeFile(markdownPath, `# Notes\n\n${"before ".repeat(600)}\n`);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "large-inline.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, `# Notes\n\n${"after ".repeat(600)}\n`);
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "large-inline.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.match(html, /data-diff-kind="removed"/);
+    assert.match(html, /data-diff-kind="added"/);
+    assert.doesNotMatch(html, /mdv-inline-diff/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -401,13 +495,44 @@ test("renders a changed Markdown table as row-level changes in one table", async
     const html = await readFile(second.outputPath, "utf8");
     assert.equal((html.match(/<table class="mdv-table">/g) ?? []).length, 1);
     assert.match(html, /<tr[^>]*data-diff-kind="removed"[^>]*>.*mdv-table-diff-label mdv-visually-hidden[^>]*>削除行: <\/span>billing<\/td><td>Billing<\/td><td>Queue<\/td><\/tr>/);
-    assert.match(html, /<tr[^>]*data-diff-kind="added"[^>]*>.*mdv-table-diff-label mdv-visually-hidden[^>]*>追加行: <\/span>billing<\/td><td>Billing<\/td><td>Queue \(async\)<\/td><\/tr>/);
+    assert.match(html, /<tr[^>]*data-diff-kind="added"[^>]*>.*mdv-table-diff-label mdv-visually-hidden[^>]*>追加行: <\/span>billing<\/td><td>Billing<\/td><td>Queue <span class="mdv-inline-diff">\(async\)<\/span><\/td><\/tr>/);
     const viewerCss = await readFile(new URL("../src/viewer.css", import.meta.url), "utf8");
     assert.match(viewerCss, /[.]mdv-table-diff-marker, [.]mdv-table-diff-label \{ display: none; \}/);
     assert.match(viewerCss, /data-view="changes"[^\n]+[.]mdv-table-diff-marker[^\n]+display: block/);
     assert.equal((html.match(/<td>auth<\/td>/g) ?? []).length, 1);
     assert.equal((html.match(/<td>user<\/td>/g) ?? []).length, 1);
     assert.doesNotMatch(html, /mdv-table-wrap"[^>]*data-diff-kind/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("keeps inline table comparisons inside corresponding cells", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-table-cell-inline-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "table-cells.md");
+  const header = "| ID | Left | Right |\n| --- | --- | --- |\n";
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?table-cell-inline=${Date.now()}`);
+    await writeFile(markdownPath, `${header}| row | Alpha | Beta |\n`);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "tables", branch: "main", relativePath: "table-cells.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, `${header}| row | Beta | Alpha |\n`);
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "tables", branch: "main", relativePath: "table-cells.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.match(html, /data-diff-kind="removed"[^>]*>.*<td><span class="mdv-inline-diff">Alpha<\/span><\/td><td><span class="mdv-inline-diff">Beta<\/span><\/td>/);
+    assert.match(html, /data-diff-kind="added"[^>]*>.*<td><span class="mdv-inline-diff">Beta<\/span><\/td><td><span class="mdv-inline-diff">Alpha<\/span><\/td>/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -439,8 +564,8 @@ test("renders a changed Markdown list as item-level changes in one list", async 
     assert.equal((html.match(/<ul class="mdv-block mdv-list"/g) ?? []).length, 1);
     assert.equal((html.match(/>Alpha<\/p>/g) ?? []).length, 1);
     assert.equal((html.match(/>Omega<\/p>/g) ?? []).length, 1);
-    assert.match(html, /<li data-diff-kind="removed"[^>]*>.*削除項目: <\/span><p[^>]*>Before<\/p><\/li>/);
-    assert.match(html, /<li data-diff-kind="added"[^>]*>.*追加項目: <\/span><p[^>]*>After<\/p><\/li>/);
+    assert.match(html, /<li data-diff-kind="removed"[^>]*>.*削除項目: <\/span><p[^>]*><span class="mdv-inline-diff">Before<\/span><\/p><\/li>/);
+    assert.match(html, /<li data-diff-kind="added"[^>]*>.*追加項目: <\/span><p[^>]*><span class="mdv-inline-diff">After<\/span><\/p><\/li>/);
     assert.equal((html.match(/class="mdv-list-structural-marker" aria-hidden="true">•<\/span>/g) ?? []).length, 2);
     assert.doesNotMatch(html, /<ul[^>]*data-diff-kind/);
     assert.doesNotMatch(html, /<ul[^>]*data-change/);
@@ -473,8 +598,8 @@ test("preserves ordered-list numbering for item-level changes", async () => {
     });
     const html = await readFile(second.outputPath, "utf8");
     assert.match(html, /<ol class="mdv-block mdv-list" start="3"[^>]*>/);
-    assert.match(html, /<li value="4" data-diff-kind="removed"[^>]*>.*Before<\/p><\/li>/);
-    assert.match(html, /<li value="4" data-diff-kind="added"[^>]*>.*After<\/p><\/li>/);
+    assert.match(html, /<li value="4" data-diff-kind="removed"[^>]*>.*<span class="mdv-inline-diff">Before<\/span><\/p><\/li>/);
+    assert.match(html, /<li value="4" data-diff-kind="added"[^>]*>.*<span class="mdv-inline-diff">After<\/span><\/p><\/li>/);
     assert.equal((html.match(/mdv-list-structural-marker-ordered" aria-hidden="true">4[.]<\/span>/g) ?? []).length, 2);
     assert.match(html, /<li value="5"[^>]*>.*Omega<\/p><\/li>/);
   } finally {
@@ -559,6 +684,7 @@ test("detects inline Markdown-only table row changes and pairs adjacent replacem
     assert.match(html, /target=new-alpha[.]md/);
     assert.match(html, /<strong>Stable text<\/strong>/);
     assert.match(html, /<em>Stable text<\/em>/);
+    assert.doesNotMatch(html, /mdv-inline-diff[^>]*>Stable text/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -701,8 +827,8 @@ test("renders any Markdown file at a worktree-wide revision without adding docum
     assert.match(stable.html, /Stable[.]/);
 
     const changed = await renderWorkspaceRevision(workspace.workspaceId, revision.id, workspaceDocumentId(repo, "second.md"), { historyRoot });
-    assert.match(changed.html, /data-diff-kind="removed"[^>]*>Before[.]<\/p>/);
-    assert.match(changed.html, /data-diff-kind="added"[^>]*>After[.]<\/p>/);
+    assert.match(changed.html, /data-diff-kind="removed"[^>]*><span class="mdv-inline-diff">Before<\/span>[.]<\/p>/);
+    assert.match(changed.html, /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">After<\/span>[.]<\/p>/);
 
     await rm(firstPath);
     await renderMarkdownFile(secondPath, {

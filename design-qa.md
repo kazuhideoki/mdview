@@ -1,5 +1,44 @@
 # mdview Design QA
 
+## Incremental QA — inline word diff emphasis (2026-08-25)
+
+### Evidence
+
+- Source visual truth: `/var/folders/l2/cjff7mnn4gx3n38g2tb5zqlr0000gn/T/codex-clipboard-e5a0505d-1a2f-465c-9c86-3d8bab71fc48.png`
+- Browser-rendered implementation: `implementation-inline-diff.png`
+- Browser-rendered full Changes state: `implementation-inline-diff-full.png`
+- Combined comparison: `design-qa-inline-diff-comparison.png` (reference on the left, implementation on the right)
+- Preview route: `http://127.0.0.1:4321/documents/22e334a871aa7e97/doc/architecture.md.5f13ec6c7d706f2e710255fc.html?view=changes`
+- Viewport: 1280 x 720 CSS px at device pixel ratio 1
+- Pixels and normalization: source 751 x 436 px, scaled proportionally to 1240 x 720 px for the combined comparison; implementation 1280 x 720 px at 1x; full implementation 1280 x 1994 px.
+- State: dark theme, Changes view, paired paragraph, list-item, and table-row replacements visible.
+
+### Findings
+
+No actionable P0, P1, or P2 findings remain.
+
+- Fonts and typography: the existing Japanese sans-serif text, heading hierarchy, line height, and reading axis are unchanged. Inline emphasis changes only the semantic background and keeps the foreground at the existing warm near-white.
+- Spacing and layout rhythm: the emphasized spans use 0.04 em vertical and 0.08 em horizontal padding with compensating negative inline margins, so line wrapping and block density remain visually stable.
+- Colors and visual tokens: the existing soft removed/added block backgrounds remain at 0.15 alpha. Changed words use the same semantic hues at 0.42 alpha, producing the requested two-level emphasis without introducing a new palette.
+- Image quality and asset fidelity: this scoped change contains no raster, logo, illustration, or icon asset. The supplied terminal screenshot is used as the interaction-pattern reference rather than as a full mdview layout target.
+- Copy and content: common text remains unaccented while `説明` / `定義`, `かつ障害ドメインの単位`, the changed timeout phrases, and `（非同期）` are emphasized. Markdown structure and accessibility labels remain intact.
+- Interaction and accessibility: switching to Read produced zero visible removed blocks and transparent inline backgrounds for all six marked spans. Returning to Changes restored the semantic backgrounds. The browser console reported no warnings or errors.
+
+The combined comparison is the focused region comparison: both sides show the changed rows and their stronger changed-substring treatment at a common 720 px height. A second crop was unnecessary because the inline text and backgrounds are legible in that artifact; `implementation-inline-diff-full.png` separately confirms the same treatment in list and table content.
+
+### Comparison History
+
+1. Initial implementation
+   - Added word-segment comparison only for unambiguous removed/added pairs.
+   - Preserved the softer row or block background and applied the stronger semantic background only to unmatched visible text.
+   - Browser evidence confirmed six correctly classified inline spans, no styling in Read, and no console errors.
+2. Post-review boundary hardening — passed
+   - Required a unique line-projected top-level pair, with a shared word for multiple replacements in one hunk, and limited merged list/table inline comparison to a single-item replacement run.
+   - Kept table cells and complex Markdown children as separate comparison units so repeated text cannot match across semantic boundaries.
+   - Added a bounded comparison fallback so unusually large replacements retain clear row or block highlighting without risking unbounded LCS memory.
+
+final result: passed
+
 ## Incremental QA — table diff markers outside the grid (2026-08-25)
 
 ### Evidence
