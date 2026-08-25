@@ -9,13 +9,17 @@ const RUNTIME_SOURCES = [
   "./codex-context.mjs",
   "./document.mjs",
   "./history.mjs",
+  "./hook-event.mjs",
   "./paths.mjs",
+  "./repository-lineage.mjs",
+  "./repository-sync.mjs",
   "./render-document.mjs",
   "./renderer.mjs",
   "./server.mjs",
   "./template.mjs",
   "./viewer-entry.js",
   "./viewer.css",
+  "./workspace-history.mjs",
   "../package-lock.json",
 ].map((relative) => ({ relative, url: new URL(relative, import.meta.url) }));
 

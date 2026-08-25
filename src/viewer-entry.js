@@ -1204,7 +1204,9 @@ function refreshHistoryCursor() {
     refreshSessionTitle(status, "");
     return;
   }
-  const source = current.source === "hook" || current.source === "codex-hook" ? "Codex" : "手動";
+  const source = current.source === "hook" || current.source === "codex-hook"
+    ? "Codex"
+    : current.source === "repository-sync" ? "Git" : "手動";
   status.replaceChildren();
   const position = document.createElement("strong");
   position.textContent = `${historyState.currentIndex + 1} / ${historyState.revisions.length}`;
