@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { resolveGitRepositoryContext } from "../src/codex-context.mjs";
-import { storeHistorySnapshot } from "../src/history.mjs";
+import { readHistorySnapshot, storeHistorySnapshot } from "../src/history.mjs";
 import { readWorkspaceLineage } from "../src/repository-lineage.mjs";
 import { primaryWorktreeRoot, reconcilePrimaryWorkspace, reconcileWorkspaceRoot } from "../src/repository-sync.mjs";
 import { readWorkspaceHistoryForRoot, registerWorkspaceRevision } from "../src/workspace-history.mjs";
@@ -129,6 +129,120 @@ test("repository sync appends merged worktree lineage to the primary workspace",
   const preserved = await readWorkspaceHistoryForRoot(mainRoot, { root: historyRoot });
   assert.equal(preserved.revisions.length, 3);
   assert.equal(preserved.revisions.at(-1).files["README.md"], digest(dirty));
+});
+
+test("repository sync compares a legacy primary history with the merge first parent", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-legacy-baseline-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const historyRoot = path.join(directory, "history");
+  const mainRoot = path.join(directory, "repo");
+  const featureRoot = path.join(directory, "feature");
+  await mkdir(mainRoot);
+  await git(mainRoot, ["init", "-b", "main"]);
+  await git(mainRoot, ["config", "user.name", "mdview test"]);
+  await git(mainRoot, ["config", "user.email", "mdview@example.test"]);
+
+  const readmeBefore = "# Before\n";
+  const readmeAfter = "# After\n";
+  const agents = "# Agents\n";
+  const editorial = "# Editorial\n";
+  await writeFile(path.join(mainRoot, "README.md"), readmeBefore);
+  await writeFile(path.join(mainRoot, "AGENTS.md"), agents);
+  await writeFile(path.join(mainRoot, "editorial.md"), editorial);
+  await git(mainRoot, ["add", "README.md", "AGENTS.md", "editorial.md"]);
+  await git(mainRoot, ["commit", "-m", "base"]);
+
+  await storeHistorySnapshot(editorial, { root: historyRoot });
+  await registerWorkspaceRevision({
+    root: mainRoot,
+    renderedAt: "2026-08-25T09:00:00.000Z",
+    source: "legacy-migration",
+    sessionId: "legacy-session",
+    turnId: "legacy-turn",
+    meta: { repo: "repo", worktree: "repo", branch: "unknown", head: null },
+    files: { "editorial.md": digest(editorial) },
+    changes: [{ path: "editorial.md", beforeContentHash: null, contentHash: digest(editorial) }],
+  }, { root: historyRoot });
+
+  await git(mainRoot, ["worktree", "add", "-b", "feature/docs", featureRoot]);
+  await writeFile(path.join(featureRoot, "README.md"), readmeAfter);
+  await git(featureRoot, ["add", "README.md"]);
+  await git(featureRoot, ["commit", "-m", "edit readme"]);
+  const featureContext = await resolveGitRepositoryContext(featureRoot);
+  for (const contents of [readmeAfter, agents, editorial]) await storeHistorySnapshot(contents, { root: historyRoot });
+  await registerWorkspaceRevision({
+    root: featureRoot,
+    renderedAt: "2026-08-25T10:00:00.000Z",
+    source: "hook",
+    sessionId: "feature-session",
+    turnId: "feature-turn",
+    meta: gitMeta(featureRoot, "feature/docs", featureContext),
+    files: {
+      "AGENTS.md": digest(agents),
+      "README.md": digest(readmeAfter),
+      "editorial.md": digest(editorial),
+    },
+    changes: [{ path: "README.md", beforeContentHash: digest(readmeBefore), contentHash: digest(readmeAfter) }],
+  }, { root: historyRoot });
+
+  await git(mainRoot, ["merge", "--no-ff", "feature/docs", "-m", "merge feature"]);
+  const reconciled = await reconcileWorkspaceRoot(mainRoot, {
+    historyRoot,
+    now: Date.parse("2026-08-25T11:00:00.000Z"),
+  });
+
+  assert.deepEqual(reconciled.revision.changes, [{
+    path: "README.md",
+    kind: "modified",
+    beforeContentHash: digest(readmeBefore),
+    contentHash: digest(readmeAfter),
+  }]);
+  assert.equal(await readHistorySnapshot(digest(readmeBefore), { root: historyRoot }), readmeBefore);
+  assert.equal(reconciled.revision.mergeSources.length, 1);
+});
+
+test("repository sync preserves a complete commitless hook snapshot as its baseline", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-commitless-hook-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const historyRoot = path.join(directory, "history");
+  const mainRoot = path.join(directory, "repo");
+  await mkdir(mainRoot);
+  await git(mainRoot, ["init", "-b", "main"]);
+  await git(mainRoot, ["config", "user.name", "mdview test"]);
+  await git(mainRoot, ["config", "user.email", "mdview@example.test"]);
+
+  const committedBefore = "# Committed before\n";
+  const hookSnapshot = "# Complete hook snapshot\n";
+  const committedAfter = "# Committed after\n";
+  await writeFile(path.join(mainRoot, "README.md"), committedBefore);
+  await git(mainRoot, ["add", "README.md"]);
+  await git(mainRoot, ["commit", "-m", "base"]);
+  await storeHistorySnapshot(hookSnapshot, { root: historyRoot });
+  await registerWorkspaceRevision({
+    root: mainRoot,
+    renderedAt: "2026-08-25T09:00:00.000Z",
+    source: "hook",
+    sessionId: "hook-session",
+    turnId: "hook-turn",
+    meta: { repo: "repo", worktree: "repo", branch: "main", head: null },
+    files: { "README.md": digest(hookSnapshot) },
+    changes: [],
+  }, { root: historyRoot });
+
+  await writeFile(path.join(mainRoot, "README.md"), committedAfter);
+  await git(mainRoot, ["add", "README.md"]);
+  await git(mainRoot, ["commit", "-m", "change readme"]);
+  const reconciled = await reconcileWorkspaceRoot(mainRoot, {
+    historyRoot,
+    now: Date.parse("2026-08-25T10:00:00.000Z"),
+  });
+
+  assert.deepEqual(reconciled.revision.changes, [{
+    path: "README.md",
+    kind: "modified",
+    beforeContentHash: digest(hookSnapshot),
+    contentHash: digest(committedAfter),
+  }]);
 });
 
 test("repository sync can attach a source history that appears after the primary HEAD was recorded", async (t) => {

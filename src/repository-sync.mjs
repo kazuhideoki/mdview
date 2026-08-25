@@ -53,6 +53,7 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
   };
   const renderedAt = new Date(options.now ?? Date.now()).toISOString();
   const committedFiles = new Map();
+  let comparisonFiles = previous?.files || {};
   let files;
   if (previous && previousCommit === gitContext.commit) {
     files = previous.files;
@@ -60,9 +61,16 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
     const snapshot = await committedMarkdownSnapshot(absoluteRoot, gitContext.commit, options);
     files = snapshot.files;
     committedFiles.set(gitContext.commit, files);
-    for (const [relativePath, contents] of Object.entries(snapshot.contents)) {
-      await storeHistorySnapshot(contents, { ...stored, contentHash: files[relativePath] });
-    }
+    await storeCommittedMarkdownSnapshot(snapshot, stored);
+  }
+  const needsLegacyMergeBaseline = previous?.source === "legacy-migration"
+    && !previousCommit
+    && gitContext.parents.length > 1;
+  if (needsLegacyMergeBaseline) {
+    const firstParentSnapshot = await committedMarkdownSnapshot(absoluteRoot, gitContext.parents[0], options);
+    comparisonFiles = firstParentSnapshot.files;
+    committedFiles.set(gitContext.parents[0], comparisonFiles);
+    await storeCommittedMarkdownSnapshot(firstParentSnapshot, stored);
   }
   const filesEqual = previous && workspaceFilesEqual(previous.files, files);
   const mergeSources = previous
@@ -103,7 +111,7 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
     turnId: null,
     meta,
     files,
-    changes: previous ? workspaceChanges(previous.files, files) : [],
+    changes: previous ? workspaceChanges(comparisonFiles, files) : [],
     mergeSources,
   }, stored);
   return { action: result.added ? "reconciled" : "unchanged", ...result };
@@ -146,6 +154,12 @@ async function committedMarkdownSnapshot(root, commit, options) {
     files[relativePath] = createHash("sha256").update(markdown).digest("hex");
   }
   return { files, contents };
+}
+
+async function storeCommittedMarkdownSnapshot(snapshot, options) {
+  for (const [relativePath, contents] of Object.entries(snapshot.contents)) {
+    await storeHistorySnapshot(contents, { ...options, contentHash: snapshot.files[relativePath] });
+  }
 }
 
 function workspaceChanges(previous, current) {
