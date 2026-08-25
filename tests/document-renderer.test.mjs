@@ -400,8 +400,11 @@ test("renders a changed Markdown table as row-level changes in one table", async
     });
     const html = await readFile(second.outputPath, "utf8");
     assert.equal((html.match(/<table class="mdv-table">/g) ?? []).length, 1);
-    assert.match(html, /<tr[^>]*data-diff-kind="removed"[^>]*>.*削除行: <\/span>billing<\/td><td>Billing<\/td><td>Queue<\/td><\/tr>/);
-    assert.match(html, /<tr[^>]*data-diff-kind="added"[^>]*>.*追加行: <\/span>billing<\/td><td>Billing<\/td><td>Queue \(async\)<\/td><\/tr>/);
+    assert.match(html, /<tr[^>]*data-diff-kind="removed"[^>]*>.*mdv-table-diff-label mdv-visually-hidden[^>]*>削除行: <\/span>billing<\/td><td>Billing<\/td><td>Queue<\/td><\/tr>/);
+    assert.match(html, /<tr[^>]*data-diff-kind="added"[^>]*>.*mdv-table-diff-label mdv-visually-hidden[^>]*>追加行: <\/span>billing<\/td><td>Billing<\/td><td>Queue \(async\)<\/td><\/tr>/);
+    const viewerCss = await readFile(new URL("../src/viewer.css", import.meta.url), "utf8");
+    assert.match(viewerCss, /[.]mdv-table-diff-marker, [.]mdv-table-diff-label \{ display: none; \}/);
+    assert.match(viewerCss, /data-view="changes"[^\n]+[.]mdv-table-diff-marker[^\n]+display: block/);
     assert.equal((html.match(/<td>auth<\/td>/g) ?? []).length, 1);
     assert.equal((html.match(/<td>user<\/td>/g) ?? []).length, 1);
     assert.doesNotMatch(html, /mdv-table-wrap"[^>]*data-diff-kind/);

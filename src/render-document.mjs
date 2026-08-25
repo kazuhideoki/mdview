@@ -127,7 +127,7 @@ async function renderTableRow(row, state, header, alignments = []) {
     : "";
   const cells = await Promise.all((row.children ?? []).map(async (cell, index) => {
     const marker = index === 0 && diffKind
-      ? `<span class="mdv-table-diff-marker" aria-hidden="true">${diffKind === "removed" ? "−" : "+"}</span><span class="mdv-visually-hidden">${diffKind === "removed" ? "削除行: " : "追加行: "}</span>`
+      ? `<span class="mdv-table-diff-marker" aria-hidden="true">${diffKind === "removed" ? "−" : "+"}</span><span class="mdv-table-diff-label mdv-visually-hidden">${diffKind === "removed" ? "削除行: " : "追加行: "}</span>`
       : "";
     return `<${cellTag}${header ? ' scope="col"' : ""}${alignments[index] ? ` class="align-${alignments[index]}"` : ""}>${marker}${await renderInlineChildren(cell.children ?? [], state)}</${cellTag}>`;
   }));

@@ -1,5 +1,42 @@
 # mdview Design QA
 
+## Incremental QA — table diff markers outside the grid (2026-08-25)
+
+### Evidence
+
+- Source visual truth: `design-qa-source-table-diff.png`
+- Browser-rendered implementation: `design-qa-implementation-full.png`
+- Browser-rendered table state: `design-qa-implementation-scrolled.png`
+- Combined focused comparison: `design-qa-comparison.png` (source on the left, implementation on the right)
+- Preview route: `http://127.0.0.1:4322/documents/8d05cf208e28e724/doc/architecture.md.a0aca0e1605e160fafe33fef.html?view=changes`
+- Viewport: 1280 x 720 CSS px at device pixel ratio 1
+- Pixels and normalization: source 171 x 163 px; full implementation 1280 x 1840 px; visible implementation state 1253 x 705 px. The source is a focused component crop, so the combined comparison preserves it at 1x and pairs it with a 1x crop of the rendered table rather than treating it as a full-page reference.
+- State: dark theme, Changes view, changed table row replacement visible
+
+### Findings
+
+No actionable P0, P1, or P2 findings remain.
+
+- Fonts and typography: cell text and the monospace diff markers retain the existing type sizes, weights, and line heights.
+- Spacing and layout rhythm: unchanged, removed, and added first-cell content all begin at x=381 CSS px. The markers occupy x=344–368 while the table border begins at x=366, so they are visibly outside the grid and reserve no cell width.
+- Colors and visual tokens: the existing removed red, added green, row backgrounds, and two-pixel state rails are unchanged.
+- Image quality and asset fidelity: this UI contains no raster or illustrative asset; the supplied screenshot is used only as the visual comparison target.
+- Copy and content: table values and the visually hidden `削除行:` / `追加行:` accessibility labels are preserved.
+- Interaction and console: switching to Read hides the visible marker and accessible diff label from added rows as well as hiding removed rows; switching back to Changes restores them. The browser console reported no warnings or errors.
+
+The source itself is already a focused table-region capture, so it serves as the complete visual target for this scoped change. `design-qa-comparison.png` is the required same-input focused comparison; `design-qa-implementation-full.png` supplies page-level context.
+
+### Comparison History
+
+1. Initial state — blocked
+   - P2: the visible `+` / `−` was inline in the first cell and shifted changed-row content to the right.
+2. Independent review — blocked
+   - P1: the globally absolute-positioned marker remained visible in Read view because its gutter variable and containing block existed only in Changes view.
+   - Fix: hide both the visual marker and accessible row-state label by default, then expose them only in Changes view.
+3. Final state — passed
+   - Moved the visible marker into a 24 px table-exterior gutter with absolute positioning while keeping the accessible row label in the cell.
+   - Browser geometry confirms identical first-cell content alignment for unchanged, removed, and added rows, with the marker outside the table border. Read view reports `display: none` for both marker and row-state label and shows only `billing` as cell text.
+
 ## Evidence
 
 - Source visual truth: `/Users/kazuhideoki/.codex/generated_images/019ff97d-dd43-7220-8bf8-6e9e8dba0fb5/exec-53754f4c-36db-41fb-8a9d-dd1c5c365b53.png`
