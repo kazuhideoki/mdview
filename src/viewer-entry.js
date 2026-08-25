@@ -17,6 +17,8 @@ const workspacePaletteOverlay = document.querySelector("[data-workspace-palette-
 const workspacePaletteInput = document.querySelector("#mdv-workspace-palette-input");
 const workspacePaletteResults = document.querySelector("#mdv-workspace-palette-results");
 const workspacePaletteStatus = document.querySelector("#mdv-workspace-palette-status");
+const shortcutsOverlay = document.querySelector("[data-shortcuts-overlay]");
+const shortcutsDialog = document.querySelector("#mdv-shortcuts-dialog");
 const workspaceFiles = document.querySelector("[data-workspace-files]");
 const workspaceFilesStatus = document.querySelector("[data-workspace-files-status]");
 const searchState = {
@@ -29,6 +31,9 @@ const searchState = {
 const workspacePaletteState = {
   matches: [],
   activeIndex: -1,
+  restoreFocus: null,
+};
+const shortcutsState = {
   restoreFocus: null,
 };
 const workspaceState = {
@@ -95,6 +100,9 @@ workspacePaletteResults?.addEventListener("click", (event) => {
   setActiveWorkspaceResult(Number(option.dataset.resultIndex), false);
   openSelectedWorkspace();
 });
+shortcutsOverlay?.addEventListener("click", (event) => {
+  if (event.target === shortcutsOverlay) closeShortcuts();
+});
 document.addEventListener("click", (event) => {
   if (!lineageWorkspaceId || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
   const anchor = event.target.closest?.("a[href]");
@@ -156,6 +164,9 @@ async function runAction(button) {
     case "close-workspace-palette":
       closeWorkspacePalette();
       break;
+    case "close-shortcuts":
+      closeShortcuts();
+      break;
     case "previous-revision":
       navigateRevision(-1);
       break;
@@ -187,6 +198,7 @@ document.addEventListener("keydown", (event) => {
   const commandK = (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "k";
   if (commandK && event.shiftKey) {
     event.preventDefault();
+    closeShortcuts();
     if (isWorkspacePaletteOpen()) closeWorkspacePalette();
     else {
       closeSearch();
@@ -196,11 +208,26 @@ document.addEventListener("keydown", (event) => {
   }
   if (commandK) {
     event.preventDefault();
+    closeShortcuts();
     if (isSearchOpen()) closeSearch();
     else {
       closeWorkspacePalette();
       openSearch();
     }
+    return;
+  }
+
+  if (isShortcutsOpen()) {
+    if (event.key === "?" && event.repeat) {
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "Escape" || event.key === "?") {
+      event.preventDefault();
+      closeShortcuts();
+      return;
+    }
+    if (event.key === "Tab") trapPaletteFocus(shortcutsOverlay, event);
     return;
   }
 
@@ -255,6 +282,14 @@ document.addEventListener("keydown", (event) => {
       }
     }
     if (event.key === "Tab") trapPaletteFocus(searchOverlay, event);
+    return;
+  }
+
+  if (event.key === "?" && !event.repeat && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target)) {
+    event.preventDefault();
+    closeSearch();
+    closeWorkspacePalette();
+    openShortcuts();
     return;
   }
 
@@ -514,6 +549,29 @@ function closeWorkspacePalette() {
 
 function isWorkspacePaletteOpen() {
   return Boolean(workspacePaletteOverlay && !workspacePaletteOverlay.hidden);
+}
+
+function openShortcuts() {
+  if (!shortcutsOverlay || !shortcutsDialog || isShortcutsOpen()) return;
+  shortcutsState.restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  shortcutsOverlay.hidden = false;
+  setPaletteBackgroundInert(shortcutsOverlay, true);
+  document.body.classList.add("mdv-search-open");
+  requestAnimationFrame(() => shortcutsDialog.querySelector("button")?.focus());
+}
+
+function closeShortcuts() {
+  if (!shortcutsOverlay || shortcutsOverlay.hidden) return;
+  shortcutsOverlay.hidden = true;
+  setPaletteBackgroundInert(shortcutsOverlay, false);
+  document.body.classList.remove("mdv-search-open");
+  const restoreTarget = shortcutsState.restoreFocus?.isConnected ? shortcutsState.restoreFocus : null;
+  shortcutsState.restoreFocus = null;
+  restoreTarget?.focus();
+}
+
+function isShortcutsOpen() {
+  return Boolean(shortcutsOverlay && !shortcutsOverlay.hidden);
 }
 
 function updateWorkspacePaletteResults() {

@@ -66,7 +66,7 @@
   .mdv-top-actions button:hover, .mdv-sidebar-head > button:hover { background: rgba(255,255,255,.06); }
   .mdv-top-actions .mdv-search-trigger { width: auto; display: flex; align-items: center; gap: 7px; padding: 0 7px 0 10px; border: 1px solid var(--mdv-border-soft); color: var(--mdv-muted); font-size: 12px; }
   .mdv-search-trigger > span { color: #c6c8c3; }
-  .mdv-search-trigger kbd, .mdv-search-input-row kbd, .mdv-search-help kbd { min-width: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 3px 5px; border: 1px solid #3b3d39; border-radius: 3px; background: #20211f; color: #aeb0ab; box-shadow: 0 1px 0 rgba(0,0,0,.35); font: 11px/1 var(--mdv-font-mono); }
+  .mdv-search-trigger kbd, .mdv-search-input-row kbd, .mdv-search-help kbd, .mdv-shortcuts-dialog kbd { min-width: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 3px 5px; border: 1px solid #3b3d39; border-radius: 3px; background: #20211f; color: #aeb0ab; box-shadow: 0 1px 0 rgba(0,0,0,.35); font: 11px/1 var(--mdv-font-mono); }
   .mdv-sidebar { grid-row: 2 / 3; position: sticky; top: var(--mdv-topbar); height: calc(100vh - var(--mdv-topbar) - var(--mdv-reviewbar)); display: flex; flex-direction: column; padding: 18px 18px 0 24px; border-right: 1px solid var(--mdv-border); overflow: auto; }
   .mdv-sidebar-head { display: flex; flex-direction: column; align-items: flex-start; gap: 18px; margin-bottom: 18px; color: var(--mdv-muted); font-size: 14px; }
   .mdv-sidebar-head > button { margin-left: -11px; }
@@ -148,6 +148,29 @@
   .mdv-search-help { min-height: 42px; display: flex; align-items: center; gap: 18px; padding: 7px 16px; border-top: 1px solid var(--mdv-border-soft); color: var(--mdv-faint); font-size: 11px; }
   .mdv-search-help span { display: inline-flex; align-items: center; gap: 5px; }
   .mdv-search-help kbd { min-width: 22px; padding: 3px 4px; font-size: 10px; }
+  .mdv-shortcuts-overlay { align-items: center; padding-block: 20px; }
+  .mdv-shortcuts-dialog { width: min(680px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); overflow: auto; border: 1px solid #3a3c38; border-radius: 7px; background: #181917; box-shadow: 0 28px 90px rgba(0,0,0,.58); }
+  .mdv-shortcuts-header { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 18px 14px 22px; border-bottom: 1px solid var(--mdv-border); }
+  .mdv-shortcuts-header > div { display: flex; flex-direction: column; gap: 5px; }
+  .mdv-shortcuts-header span { color: var(--mdv-accent); font: 650 10px/1 var(--mdv-font-mono); letter-spacing: .12em; text-transform: uppercase; }
+  .mdv-shortcuts-header h2 { margin: 0; color: var(--mdv-fg); font-size: 19px; font-weight: 620; letter-spacing: .01em; }
+  .mdv-shortcuts-header button { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 4px; color: var(--mdv-muted); }
+  .mdv-shortcuts-header button:hover { background: rgba(255,255,255,.06); color: var(--mdv-fg); }
+  .mdv-shortcuts-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px 38px; padding: 24px 22px 28px; }
+  .mdv-shortcuts-groups section { min-width: 0; }
+  .mdv-shortcuts-groups h3 { margin: 0 0 10px; color: var(--mdv-muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; }
+  .mdv-shortcuts-groups dl { margin: 0; }
+  .mdv-shortcuts-groups dl > div { min-height: 38px; display: grid; grid-template-columns: minmax(108px, auto) minmax(0, 1fr); align-items: center; gap: 12px; border-top: 1px solid var(--mdv-border-soft); }
+  .mdv-shortcuts-groups dt, .mdv-shortcuts-groups dd { margin: 0; }
+  .mdv-shortcuts-groups dt > span, .mdv-shortcuts-groups dd { display: flex; align-items: center; gap: 5px; }
+  .mdv-shortcuts-groups dt { color: #c9cbc6; }
+  .mdv-shortcuts-groups dd { min-width: 0; color: #c9cbc6; font-size: 12px; }
+  .mdv-shortcuts-groups dd > span { color: var(--mdv-faint); font-size: 10px; }
+  .mdv-shortcuts-dialog i { color: var(--mdv-faint); font-size: 9px; font-style: normal; }
+  .mdv-shortcuts-dialog kbd { min-width: 26px; min-height: 23px; padding-inline: 6px; }
+  .mdv-shortcuts-footer { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 8px 22px; border-top: 1px solid var(--mdv-border-soft); color: var(--mdv-faint); }
+  .mdv-shortcuts-footer > span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+  .mdv-shortcuts-footer small { font-size: 10px; }
   .mdv-toast { position: fixed; z-index: 40; left: 50%; bottom: 94px; transform: translate(-50%, 14px); opacity: 0; pointer-events: none; padding: 10px 15px; border: 1px solid var(--mdv-border); border-radius: 5px; color: var(--mdv-fg); background: #222421; font-size: 13px; transition: opacity .18s, transform .18s; }
   .mdv-toast.show { opacity: 1; transform: translate(-50%, 0); }
 }
@@ -277,6 +300,11 @@
     .mdv-search-option-context { max-width: 100%; justify-content: flex-start; }
     .mdv-search-help { gap: 12px; }
     .mdv-search-help span:last-child { display: none; }
+    .mdv-shortcuts-overlay { padding: 8px; }
+    .mdv-shortcuts-dialog { width: 100%; max-height: calc(100dvh - 16px); border-radius: 5px; }
+    .mdv-shortcuts-groups { grid-template-columns: 1fr; gap: 24px; padding: 20px 18px 24px; }
+    .mdv-shortcuts-groups dl > div { grid-template-columns: minmax(112px, auto) minmax(0, 1fr); }
+    .mdv-shortcuts-footer { align-items: flex-start; flex-direction: column; gap: 8px; padding: 12px 18px; }
   }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
 }

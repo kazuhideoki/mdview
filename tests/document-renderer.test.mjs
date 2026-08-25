@@ -95,6 +95,15 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.doesNotMatch(html, /data-view-target="raw"|mdv-raw-diff|Raw diff/);
     assert.match(html, /id="mdv-workspace-palette-dialog"[^>]+aria-labelledby="mdv-workspace-palette-title"/);
     assert.match(html, /aria-label="ワークツリーを検索"/);
+    assert.match(html, /id="mdv-shortcuts-dialog"[^>]+aria-labelledby="mdv-shortcuts-title"[^>]+aria-keyshortcuts="[?]"/);
+    const shortcutsHtml = html.slice(html.indexOf('class="mdv-shortcuts-dialog"'), html.indexOf('class="mdv-toast"'));
+    assert.match(shortcutsHtml, /Keyboard shortcuts/);
+    assert.match(shortcutsHtml, /前の版へ|前の作業へ/);
+    assert.match(shortcutsHtml, /Read/);
+    assert.match(shortcutsHtml, /Changes/);
+    assert.match(shortcutsHtml, /ワークツリーを選択/);
+    assert.doesNotMatch(shortcutsHtml, /Raw diff/);
+    assert.doesNotMatch(shortcutsHtml, /表示ボタン選択中/);
     assert.doesNotMatch(html, /data-workspace-files|id="mdv-search-dialog"|data-action="open-search"/);
     assert.match(html, /aria-label="目次"/);
     assert.match(html, /同じファイルの変更履歴/);
