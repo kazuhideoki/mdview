@@ -18,6 +18,11 @@ export async function discoverMergeSources(input, options = {}) {
   const histories = options.histories || await readWorkspaceHistories(options);
   const candidates = [];
   const destinationChanged = !previous || !workspaceFilesEqual(previous.files, input.currentFiles);
+  const currentCommit = input.currentMeta?.commit;
+  const previousCommit = previous?.meta?.commit;
+  const sameCommitMergedParents = !destinationChanged && currentCommit && currentCommit === previousCommit
+    ? new Set(mergeBoundaries(input.currentMeta).flatMap((boundary) => boundary.mergedParents))
+    : null;
   const renderedLimit = Date.parse(input.renderedAt);
   for (const history of histories) {
     if (history.workspaceId === destination.workspaceId || history.revisions.length === 0) continue;
@@ -26,6 +31,8 @@ export async function discoverMergeSources(input, options = {}) {
     for (const through of [...history.revisions].reverse()) {
       if (Date.parse(through.renderedAt) > renderedLimit) continue;
       if (alreadyIncludes(destination, history, through)) break;
+      const candidateCommit = through.meta?.commit || through.meta?.head;
+      if (sameCommitMergedParents && !sameCommitMergedParents.has(candidateCommit)) continue;
       if (!through.meta?.repositoryId && !resolvedFallbackRepository) {
         fallbackRepositoryId = (await resolveGitRepositoryContext(history.root, options))?.repositoryId;
         resolvedFallbackRepository = true;
@@ -176,18 +183,21 @@ async function gitAncestryEvidence(input, options) {
   const current = input.currentMeta?.commit || input.currentMeta?.head;
   const previous = input.previousMeta?.commit || input.previousMeta?.head;
   if (!candidate || !current) return null;
-  const parents = Array.isArray(input.currentMeta?.parents) ? input.currentMeta.parents : [];
-  const boundaries = Array.isArray(input.currentMeta?.mergeBoundaries)
-    ? input.currentMeta.mergeBoundaries
-    : parents.length > 1 ? [{ firstParent: parents[0], mergedParents: parents.slice(1) }] : [];
-  for (const boundary of boundaries) {
+  for (const boundary of mergeBoundaries(input.currentMeta)) {
     const mergedParents = Array.isArray(boundary?.mergedParents) ? boundary.mergedParents : [];
     if (!boundary?.firstParent || mergedParents.length === 0) continue;
     if (mergedParents.includes(candidate)) return "merged-parent";
   }
+  if (current === previous) return null;
   const reachesCurrent = await isAncestor(input.root, candidate, current, options);
   const alreadyReached = previous ? await isAncestor(input.root, candidate, previous, options) : false;
   return reachesCurrent && !alreadyReached ? "newly-reachable" : null;
+}
+
+function mergeBoundaries(meta) {
+  if (Array.isArray(meta?.mergeBoundaries)) return meta.mergeBoundaries;
+  const parents = Array.isArray(meta?.parents) ? meta.parents : [];
+  return parents.length > 1 ? [{ firstParent: parents[0], mergedParents: parents.slice(1) }] : [];
 }
 
 async function isAncestor(root, ancestor, descendant, options) {

@@ -38,9 +38,16 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
   const gitContext = await resolveGitRepositoryContext(absoluteRoot, options);
   if (!gitContext) return { action: "not-git", added: false, revision: null };
 
-  const branch = await gitText(absoluteRoot, ["branch", "--show-current"], options);
   const previousCommit = previous?.meta?.commit || null;
-  const mergeBoundaries = await repositoryMergeBoundaries(absoluteRoot, gitContext.commit, previousCommit, options);
+  const sameCommit = previousCommit === gitContext.commit;
+  if (previous && sameCommit && gitContext.parents.length <= 1) {
+    return { action: "unchanged", manifest: workspace, revision: previous, added: false };
+  }
+
+  const branch = await gitText(absoluteRoot, ["branch", "--show-current"], options);
+  const mergeBoundaries = sameCommit
+    ? [{ firstParent: gitContext.parents[0], mergedParents: gitContext.parents.slice(1) }]
+    : await repositoryMergeBoundaries(absoluteRoot, gitContext.commit, previousCommit, options);
   const meta = {
     repo: path.basename(absoluteRoot),
     worktree: worktreeLabel(absoluteRoot) || path.basename(absoluteRoot),
@@ -55,7 +62,7 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
   const committedFiles = new Map();
   let comparisonFiles = previous?.files || {};
   let files;
-  if (previous && previousCommit === gitContext.commit) {
+  if (previous && sameCommit) {
     files = previous.files;
   } else {
     const snapshot = await committedMarkdownSnapshot(absoluteRoot, gitContext.commit, options);
