@@ -425,7 +425,10 @@ async function renderMarkdownPage({
   const removedDiffLines = beforeTree
     ? structuralDiffLines(beforeTree, lineChanges.removedLines, lineChanges.hunks, "old")
     : [];
-  if (beforeTree) mergeTableRowDiffs(tree, beforeTree, addedDiffLines, removedDiffLines);
+  if (beforeTree) {
+    mergeTableRowDiffs(tree, beforeTree, addedDiffLines, removedDiffLines);
+    mergeListItemDiffs(tree, beforeTree, addedDiffLines, removedDiffLines, lineChanges.hunks);
+  }
   const rendered = await renderDocument(tree, {
     changedLines,
     diffLines: addedDiffLines,
@@ -558,6 +561,108 @@ function mergeTableRowDiffs(currentTree, previousTree, currentDiffLines, previou
 function changedTables(tree, diffLines) {
   const lines = new Set(diffLines);
   return (tree.children ?? []).filter((node) => node.type === "table" && rangeHasChange(node, lines));
+}
+
+function mergeListItemDiffs(currentTree, previousTree, currentDiffLines, previousDiffLines, hunks) {
+  const currentChanged = changedLists(currentTree, currentDiffLines);
+  const previousChanged = changedLists(previousTree, previousDiffLines);
+  const usedPrevious = new Set();
+
+  for (const current of currentChanged) {
+    const currentHunks = blockHunkIndexes(current, hunks, "new");
+    const matches = previousChanged
+      .map((candidate, index) => ({ candidate, index }))
+      .filter(({ candidate, index }) => !usedPrevious.has(index)
+        && candidate.ordered === current.ordered
+        && intersects(currentHunks, blockHunkIndexes(candidate, hunks, "old")));
+    if (matches.length !== 1) continue;
+
+    const [match] = matches;
+    const previous = match.candidate;
+    const previousHunks = blockHunkIndexes(previous, hunks, "old");
+    const competingCurrentLists = currentChanged.filter((candidate) =>
+      candidate.ordered === previous.ordered
+      && intersects(previousHunks, blockHunkIndexes(candidate, hunks, "new")));
+    if (competingCurrentLists.length !== 1) continue;
+
+    const mergedItems = mergeListItems(current.children ?? [], previous.children ?? [], {
+      ordered: current.ordered,
+      currentStart: current.start ?? 1,
+      previousStart: previous.start ?? 1,
+    });
+    if (!mergedItems.some((item) => item.data?.mdviewDiffKind)) continue;
+
+    usedPrevious.add(match.index);
+    current.children = mergedItems;
+    current.data = { ...current.data, mdviewMergedDiff: true };
+    previous.data = { ...previous.data, mdviewMergedDiff: true };
+  }
+}
+
+function changedLists(tree, diffLines) {
+  const lines = new Set(diffLines);
+  return (tree.children ?? []).filter((node) => node.type === "list" && rangeHasChange(node, lines));
+}
+
+function blockHunkIndexes(block, hunks, side) {
+  const direct = side === "old" ? "removedAt" : "addedAt";
+  const opposite = side === "old" ? "addedAt" : "removedAt";
+  const lineKey = side === "old" ? "oldLine" : "newLine";
+  const indexes = new Set();
+  for (const [index, hunk] of hunks.entries()) {
+    const positions = [...(hunk[direct] ?? []), ...(hunk[opposite] ?? [])];
+    if (positions.some((position) => position[lineKey] >= block.position.start.line
+      && position[lineKey] <= block.position.end.line)) indexes.add(index);
+  }
+  return indexes;
+}
+
+function intersects(left, right) {
+  return [...left].some((value) => right.has(value));
+}
+
+function mergeListItems(currentItems, previousItems, { ordered, currentStart, previousStart }) {
+  if (ordered) {
+    currentItems.forEach((item, index) => {
+      item.data = { ...item.data, mdviewListValue: currentStart + index };
+    });
+    previousItems.forEach((item, index) => {
+      item.data = { ...item.data, mdviewListValue: previousStart + index };
+    });
+  }
+  const currentSignatures = currentItems.map(stableNodeSignature);
+  const previousSignatures = previousItems.map(stableNodeSignature);
+  const matches = longestCommonSubsequence(previousSignatures, currentSignatures);
+  const merged = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+
+  for (const [nextPrevious, nextCurrent] of [...matches, [previousItems.length, currentItems.length]]) {
+    const previousRun = previousItems.slice(previousIndex, nextPrevious);
+    const currentRun = currentItems.slice(currentIndex, nextCurrent);
+    if (previousRun.length === currentRun.length) {
+      for (let index = 0; index < previousRun.length; index += 1) {
+        merged.push(markListItem(previousRun[index], "removed"));
+        merged.push(markListItem(currentRun[index], "added"));
+      }
+    } else {
+      merged.push(...previousRun.map((item) => markListItem(item, "removed")));
+      merged.push(...currentRun.map((item) => markListItem(item, "added")));
+    }
+    previousIndex = nextPrevious;
+    currentIndex = nextCurrent;
+    if (nextPrevious < previousItems.length && nextCurrent < currentItems.length) {
+      merged.push(currentItems[nextCurrent]);
+      previousIndex = nextPrevious + 1;
+      currentIndex = nextCurrent + 1;
+    }
+  }
+  return merged;
+}
+
+function markListItem(item, diffKind) {
+  item.data = { ...item.data, mdviewDiffKind: diffKind };
+  return item;
 }
 
 function mergeTableRows(currentRows, previousRows) {
