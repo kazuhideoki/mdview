@@ -37,3 +37,5 @@ In the reading view header, show only stable document-location context: reposito
 Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
 
 開発時にサーバーを起動するときは既存のサーバーのポートと競合しないように確認すること。
+
+Treat `src/cli.mjs`, exposed as the package bin `mdview`, as the production-data CLI. Repository `npm run` development commands must use a separate development cache, runtime, and port; test commands must use a fresh temporary environment for each run. Do not let a development or test command fall back to the production mdview data directories or daemon port.

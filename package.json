@@ -3,15 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "mdview": "./src/cli.mjs"
+  },
   "scripts": {
-    "dev": "vite",
-    "render": "node src/cli.mjs render",
-    "demo": "node src/cli.mjs demo",
+    "dev": "node scripts/run-development.mjs vite",
+    "render": "node scripts/run-development.mjs cli render",
+    "demo": "node scripts/run-development.mjs cli demo",
     "check": "node --check src/app-build.mjs && node --check src/cli.mjs && node --check src/codex-context.mjs && node --check src/catalog.mjs && node --check src/history.mjs && node --check src/workspace-history.mjs && node --check src/repository-lineage.mjs && node --check src/renderer.mjs && node --check src/render-document.mjs && node --check src/viewer-entry.js && node --check src/hook-event.mjs && node --check src/server.mjs && node --check src/hook-manager.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "build": "vite build && node scripts/prepare-sites-build.mjs",
-    "preview": "vite preview",
-    "test:sites": "node --test tests/sites-worker.test.mjs"
+    "preview": "node scripts/run-development.mjs vite preview",
+    "test:sites": "node scripts/run-tests.mjs tests/sites-worker.test.mjs"
   },
   "dependencies": {
     "@iconify-json/solar": "^1.2.6",

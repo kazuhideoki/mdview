@@ -25,6 +25,10 @@ stow -t ~ -d stow local-bin
 mdview hook install
 ```
 
+`src/cli.mjs` は package bin の `mdview` として定義した本番 CLI です。既定では本番用のキャッシュ、履歴、port 4320を使います。`~/.local/bin/mdview` など、利用環境ごとのインストール方法はこのCLIを呼び出します。
+
+リポジトリ内の `npm run dev`、`npm run preview`、`npm run demo`、`npm run render` は開発環境として、本番とは別のキャッシュ、履歴、port 4321を使います。`npm test` と `npm run test:sites` は実行ごとに一時環境を作り、終了時に破棄します。
+
 インストール後、Codex の `/hooks` で `UserPromptSubmit` と `Stop` の 2 エントリを個別に trust します。Hook の正常終了時は stdout を一切出しません。
 
 ## 使い方
@@ -58,4 +62,4 @@ Hook から描画した版では、保存済みのセッションIDに完全一�
 
 `UserPromptSubmit` から正常な `Stop` までの内容差分を検出します。この間に Codex 以外のプロセスが行った編集も区別できません。また、interrupt / error で `Stop` が発火しなかったターンは自動表示されません。古い基準状態は 7 日で削除します。
 
-テスト用に `MDVIEW_CACHE_DIR`、`MDVIEW_STATE_DIR`、`MDVIEW_PORT`、`MDVIEW_BROWSER=none` を指定できます。`MDVIEW_BROWSER=none` ではブラウザと配信サーバーの自動起動を省略します。
+個別の検証では `MDVIEW_CACHE_DIR`、`MDVIEW_RUNTIME_DIR`、`MDVIEW_STATE_DIR`、`MDVIEW_PORT`、`MDVIEW_BROWSER=none` を指定できます。`MDVIEW_BROWSER=none` ではブラウザと配信サーバーの自動起動を省略します。通常の開発とテストではnpm scriptsがこれらを分離するため、手動指定は不要です。

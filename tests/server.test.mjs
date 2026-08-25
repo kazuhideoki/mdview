@@ -256,7 +256,9 @@ test("catalog endpoint exposes every document in the same newest-first order as 
   await mkdir(repo, { recursive: true });
 
   const previousCache = process.env.MDVIEW_CACHE_DIR;
+  const previousRuntime = process.env.MDVIEW_RUNTIME_DIR;
   process.env.MDVIEW_CACHE_DIR = cache;
+  process.env.MDVIEW_RUNTIME_DIR = path.join(root, "runtime");
   const catalogModule = await import(`../src/catalog.mjs?all=${Date.now()}`);
   for (const [name, renderedAt] of [
     ["older", "2026-08-13T09:00:00.000Z"],
@@ -290,6 +292,8 @@ test("catalog endpoint exposes every document in the same newest-first order as 
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
+    if (previousRuntime === undefined) delete process.env.MDVIEW_RUNTIME_DIR;
+    else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
   }
 });
 
@@ -306,7 +310,9 @@ test("following a relative Markdown link stays in the selected workspace revisio
   await writeFile(targetPath, "# Guide\n\n## 利用方法\n");
 
   const previousCache = process.env.MDVIEW_CACHE_DIR;
+  const previousRuntime = process.env.MDVIEW_RUNTIME_DIR;
   process.env.MDVIEW_CACHE_DIR = cache;
+  process.env.MDVIEW_RUNTIME_DIR = path.join(root, "runtime");
   try {
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?follow=${Date.now()}`);
     const renderedSource = await renderMarkdownFile(sourcePath, {
@@ -341,6 +347,8 @@ test("following a relative Markdown link stays in the selected workspace revisio
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
+    if (previousRuntime === undefined) delete process.env.MDVIEW_RUNTIME_DIR;
+    else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
   }
 });
 
@@ -358,7 +366,9 @@ test("follow route rejects traversal, escaping symlinks, non-Markdown files, and
   await symlink(outsidePath, path.join(repo, "escape.md"));
 
   const previousCache = process.env.MDVIEW_CACHE_DIR;
+  const previousRuntime = process.env.MDVIEW_RUNTIME_DIR;
   process.env.MDVIEW_CACHE_DIR = cache;
+  process.env.MDVIEW_RUNTIME_DIR = path.join(root, "runtime");
   try {
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?safety=${Date.now()}`);
     const renderedSource = await renderMarkdownFile(sourcePath, {
@@ -381,6 +391,8 @@ test("follow route rejects traversal, escaping symlinks, non-Markdown files, and
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
+    if (previousRuntime === undefined) delete process.env.MDVIEW_RUNTIME_DIR;
+    else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
   }
 });
 
@@ -399,7 +411,9 @@ test("follow route preserves encoded filename characters and rejects encoded sep
   ]);
 
   const previousCache = process.env.MDVIEW_CACHE_DIR;
+  const previousRuntime = process.env.MDVIEW_RUNTIME_DIR;
   process.env.MDVIEW_CACHE_DIR = cache;
+  process.env.MDVIEW_RUNTIME_DIR = path.join(root, "runtime");
   try {
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?encoding=${Date.now()}`);
     const renderedSource = await renderMarkdownFile(sourcePath, {
@@ -422,6 +436,8 @@ test("follow route preserves encoded filename characters and rejects encoded sep
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
+    if (previousRuntime === undefined) delete process.env.MDVIEW_RUNTIME_DIR;
+    else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
   }
 });
 
