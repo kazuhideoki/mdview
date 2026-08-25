@@ -287,9 +287,10 @@ document.addEventListener("keydown", (event) => {
       closeWorkspacePalette();
       return;
     }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    const selectionDirection = paletteSelectionDirection(event);
+    if (selectionDirection) {
       event.preventDefault();
-      moveWorkspaceSelection(event.key === "ArrowDown" ? 1 : -1);
+      moveWorkspaceSelection(selectionDirection);
       return;
     }
     if (event.key === "Enter" && !event.isComposing) {
@@ -314,9 +315,10 @@ document.addEventListener("keydown", (event) => {
       closeOutlinePalette();
       return;
     }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    const selectionDirection = paletteSelectionDirection(event);
+    if (selectionDirection) {
       event.preventDefault();
-      moveOutlineSelection(event.key === "ArrowDown" ? 1 : -1);
+      moveOutlineSelection(selectionDirection);
       return;
     }
     if (event.key === "Enter" && !event.isComposing) {
@@ -341,9 +343,10 @@ document.addEventListener("keydown", (event) => {
       closeSearch();
       return;
     }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    const selectionDirection = paletteSelectionDirection(event);
+    if (selectionDirection) {
       event.preventDefault();
-      moveSearchSelection(event.key === "ArrowDown" ? 1 : -1);
+      moveSearchSelection(selectionDirection);
       return;
     }
     if (event.key === "Enter" && !event.isComposing) {
@@ -417,6 +420,15 @@ document.addEventListener("keydown", (event) => {
   const panel = document.querySelector(".mdv-settings");
   if (panel) panel.hidden = true;
 });
+
+function paletteSelectionDirection(event) {
+  if (event.key === "ArrowDown") return 1;
+  if (event.key === "ArrowUp") return -1;
+  if (event.isComposing || !event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return 0;
+  if (event.key.toLowerCase() === "n") return 1;
+  if (event.key.toLowerCase() === "p") return -1;
+  return 0;
+}
 
 function syncTocState() {
   const expanded = !app.classList.contains("toc-hidden");
