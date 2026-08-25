@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -277,7 +277,17 @@ function printHelp() {
   process.stdout.write(`mdview — Codex-edited Markdown reader\n\nUsage:\n  mdview                     Open the latest rendered document\n  mdview list                List rendered documents, newest first\n  mdview open <number>       Open an entry shown by mdview list\n  mdview open <file.md>      Render and open a Markdown file\n  mdview <file.md>           Shortcut for mdview open <file.md>\n  mdview render <file.md>    Render without opening a browser\n  mdview demo\n  mdview serve\n  mdview hook <install|status|uninstall>\n\nReader shortcuts:\n  P / N                      Open the previous / next worktree revision\n  R / C                      Switch to Read / Changes\n  Left / Right               Switch views while a view button is focused\n  Cmd+Shift+K                Select a worktree\n  Cmd+Shift+O                Show and search the current document outline\n  Cmd+K or /                 Search Markdown in the selected worktree\n`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+async function isDirectInvocation(argvPath = process.argv[1]) {
+  if (!argvPath) return false;
+  const absolutePath = path.resolve(argvPath);
+  try {
+    return await realpath(absolutePath) === fileURLToPath(import.meta.url);
+  } catch {
+    return absolutePath === fileURLToPath(import.meta.url);
+  }
+}
+
+if (await isDirectInvocation()) {
   main().then((code) => {
     if (Number.isInteger(code)) process.exitCode = code;
   }).catch((error) => {
@@ -286,4 +296,4 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
 }
 
-export { main };
+export { isDirectInvocation, main };

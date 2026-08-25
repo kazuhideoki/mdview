@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -151,6 +152,16 @@ test("help documents history commands and reader search shortcuts", async (t) =>
   assert.match(result.stdout, /Cmd\+Shift\+K[ ]+Select a worktree/);
   assert.match(result.stdout, /Cmd\+Shift\+O[ ]+Show and search the current document outline/);
   assert.match(result.stdout, /Cmd\+K or \/[ ]+Search Markdown in the selected worktree/);
+});
+
+test("the package CLI runs through an installation symlink", async (t) => {
+  const current = await fixture(t);
+  const linkedCli = path.join(current.directory, "mdview");
+  await symlink(CLI_PATH, linkedCli);
+
+  const result = await runExecutable(linkedCli, ["--help"], current.environment);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /mdview — Codex-edited Markdown reader/);
 });
 
 test("Stop hook passes session and turn identity through the private worker job", async (t) => {
@@ -299,8 +310,12 @@ function absoluteHref(href, port) {
 }
 
 function runCli(args, environment, input = "") {
+  return runExecutable(process.execPath, [CLI_PATH, ...args], environment, input);
+}
+
+function runExecutable(executable, args, environment, input = "") {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI_PATH, ...args], {
+    const child = spawn(executable, args, {
       env: { ...process.env, ...environment },
       stdio: ["pipe", "pipe", "pipe"],
     });

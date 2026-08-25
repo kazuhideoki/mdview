@@ -17,15 +17,18 @@ Codex が 1 ターンの間に編集した Markdown を検出し、読みやす�
 
 ## セットアップ
 
+このリポジトリを clone し、リポジトリのルートで次を実行します。
+
 ```bash
-cd ~/src/github.com/kazuhideoki/mdview
 npm install
-cd ../dotfiles
-stow -t ~ -d stow local-bin
+mkdir -p "$HOME/.local/bin"
+ln -s "$PWD/src/cli.mjs" "$HOME/.local/bin/mdview"
 mdview hook install
 ```
 
-`src/cli.mjs` は package bin の `mdview` として定義した本番 CLI です。既定では本番用のキャッシュ、履歴、port 4320を使います。`~/.local/bin/mdview` など、利用環境ごとのインストール方法はこのCLIを呼び出します。
+`~/.local/bin` が `PATH` に含まれていることを確認してください。すでに同名のファイルがある場合、`ln` は上書きせずに終了します。既存ファイルを確認してから、必要に応じて削除または退避して再実行してください。
+
+`src/cli.mjs` は package bin の `mdview` として定義した本番 CLI です。既定では本番用のキャッシュ、履歴、port 4320を使います。上記のシンボリックリンクにより、リポジトリの実装を `mdview` コマンドとして実行します。
 
 リポジトリ内の `npm run dev`、`npm run preview`、`npm run demo`、`npm run render` は開発環境として、本番とは別のキャッシュ、履歴、port 4321を使います。`npm test` と `npm run test:sites` は実行ごとに一時環境を作り、終了時に破棄します。
 

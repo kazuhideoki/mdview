@@ -2,7 +2,7 @@
 
 ## Evidence
 
-- Source visual truth: `/Users/kazuhideoki/.codex/generated_images/019ff97d-dd43-7220-8bf8-6e9e8dba0fb5/exec-53754f4c-36db-41fb-8a9d-dd1c5c365b53.png`
+- Source visual truth: the left panel of `design-comparison-final.png`
 - Browser-rendered implementation: `implementation-desktop-1487x1058.png`
 - Full-view comparison: `design-comparison-final.png` (source on the left, implementation on the right)
 - Search-palette implementation: `implementation-search-palette-1487x1058.png`
