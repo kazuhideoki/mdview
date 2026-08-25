@@ -33,7 +33,7 @@ export function icon(name, label = "") {
   return `<svg class="mdv-icon"${aria}><use href="#icon-${name}"></use></svg>`;
 }
 
-export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDiff = "" }) {
+export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
   const workspaceScoped = Boolean(meta.workspaceId && meta.workspaceRevisionId);
   const documentSearchTrigger = workspaceScoped
     ? `<button class="mdv-search-trigger" type="button" data-action="open-search" aria-label="文書を検索" aria-haspopup="dialog" aria-controls="mdv-search-dialog" aria-expanded="false">${icon("minimalistic-magnifier-linear")}<span>検索</span><kbd>⌘K</kbd></button>`
@@ -110,7 +110,6 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
       <nav class="mdv-view-switch" aria-label="表示モード">
         <button type="button" data-view-target="read" aria-pressed="true" aria-keyshortcuts="R 1" title="Read (R / 1)">Read</button>
         <button type="button" data-view-target="changes" aria-pressed="false" aria-keyshortcuts="C 2" title="Changes (C / 2)">Changes</button>
-        <button type="button" data-view-target="raw" aria-pressed="false" aria-keyshortcuts="D 3" title="Raw diff (D / 3)">Raw diff</button>
       </nav>
       <div class="mdv-top-actions">
         ${documentSearchTrigger}
@@ -124,7 +123,6 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets, rawDi
       <article class="mdv-document" data-render-schema="1">
         <div class="mdv-document-body">${contentHtml}</div>
       </article>
-      <section class="mdv-raw-diff" aria-label="Raw diff" hidden><pre><code>${escape(rawDiff || "この文書には未コミットの差分がありません。")}</code></pre></section>
     </main>
     <footer class="mdv-reviewbar">
       <div class="mdv-history-nav" aria-label="${workspaceScoped ? "ワークツリーの作業履歴" : "同じファイルの変更履歴"}">

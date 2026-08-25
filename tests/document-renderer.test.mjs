@@ -92,7 +92,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     assert.match(html, /src="[.]\/_assets\/[a-f0-9]+[.]png"/);
     assert.match(html, /data-view-target="read"[^>]+aria-keyshortcuts="R 1"[^>]+title="Read \(R \/ 1\)"/);
     assert.match(html, /data-view-target="changes"[^>]+aria-keyshortcuts="C 2"[^>]+title="Changes \(C \/ 2\)"/);
-    assert.match(html, /data-view-target="raw"[^>]+aria-keyshortcuts="D 3"[^>]+title="Raw diff \(D \/ 3\)"/);
+    assert.doesNotMatch(html, /data-view-target="raw"|mdv-raw-diff|Raw diff/);
     assert.match(html, /id="mdv-workspace-palette-dialog"[^>]+aria-labelledby="mdv-workspace-palette-title"/);
     assert.match(html, /aria-label="ワークツリーを検索"/);
     assert.doesNotMatch(html, /data-workspace-files|id="mdv-search-dialog"|data-action="open-search"/);
@@ -300,8 +300,6 @@ test("keeps prior HTML and renders revision changes against the previous snapsho
     await access(second.outputPath);
     assert.notEqual(first.outputPath, second.outputPath);
     const secondHtml = await readFile(second.outputPath, "utf8");
-    assert.match(secondHtml, /-Before[.]/);
-    assert.match(secondHtml, /\+After[.]/);
     assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="removed"[^>]*>Before[.]<\/p>/);
     assert.match(secondHtml, /<p class="mdv-block mdv-paragraph"[^>]*data-diff-kind="added"[^>]*>After[.]<\/p>/);
     assert.ok(secondHtml.indexOf('id="title"') < secondHtml.indexOf('data-diff-kind="removed"'));

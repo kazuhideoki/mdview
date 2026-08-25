@@ -23,7 +23,7 @@ No actionable P0, P1, or P2 findings remain.
 - Search extension: the 720 px command palette preserves the source's flat graphite surfaces, one-pixel borders, compact control density, cyan selection rail, and square-leaning radii. Its centered overlay is an intentional new interaction state rather than a recreation target present in the original mock, and the underlying Editorial Focus composition remains visible for context.
 - Colors and visual tokens: graphite background, subtle one-pixel dividers, cyan active state, amber modified state, muted green update status, and restrained gray text match the source. No gradients are used.
 - Image quality and asset fidelity: the source contains no photographic or illustrative assets. Icons come from the Solar icon library rather than custom SVG or CSS drawings. Mermaid and D2 remain vector output.
-- Copy and content: the reference repository, branch, document path, Japanese architecture content, labels, code sample, and table values are preserved. The implementation additionally exposes real Raw diff, Mermaid, and review states without changing the source screen's hierarchy.
+- Copy and content: the reference repository, branch, document path, Japanese architecture content, labels, code sample, and table values are preserved. The implementation additionally exposes Mermaid and review states without changing the source screen's hierarchy.
 - Accessibility and responsive behavior: semantic headings/table headers, labeled controls, focus styles, reduced-motion handling, mobile TOC reopen control, scrim dismissal, and disabled empty-change navigation are present. The mobile 390 x 844 check confirmed a closed initial TOC, visible reopen control, and working scrim close.
 - Search interaction and accessibility: `Cmd+K` and `/` open the palette; `/` remains text input inside editable controls; Arrow Up/Down wrap selection; Enter opens the selected document in the same tab; Escape and backdrop close it; focus returns to the trigger. Dialog, combobox, listbox, option selection, expanded state, background inertness, empty/loading/error states, and the 390 x 844 layout were verified. The final browser console contained zero errors.
 
@@ -46,7 +46,7 @@ No focused region comparison was needed beyond the equal-size full-view comparis
 
 3. Final pass — passed
    - `design-comparison-final.png` confirms the same major composition, hierarchy, tokens, code/table treatment, and persistent controls.
-   - Browser checks confirmed Read / Changes / Raw diff, TOC following, next change, mark read, settings, code collapse, Mermaid rendering, mobile TOC/scrim, and zero console errors.
+   - Browser checks confirmed Read / Changes, TOC following, next change, mark read, settings, code collapse, Mermaid rendering, mobile TOC/scrim, and zero console errors.
 
 4. Search-reference pass — passed
    - Added the cross-document command palette without changing the selected Editorial Focus layout or visual tokens.

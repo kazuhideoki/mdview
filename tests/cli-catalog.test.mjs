@@ -146,7 +146,7 @@ test("help documents history commands and reader search shortcuts", async (t) =>
   assert.match(result.stdout, /mdview list/);
   assert.doesNotMatch(result.stdout, /mdview recent/);
   assert.match(result.stdout, /mdview open <number>/);
-  assert.match(result.stdout, /R \/ C \/ D[ ]+Switch to Read \/ Changes \/ Raw diff/);
+  assert.match(result.stdout, /R \/ C[ ]+Switch to Read \/ Changes/);
   assert.match(result.stdout, /Left \/ Right[ ]+Switch views/);
   assert.match(result.stdout, /Cmd\+Shift\+K[ ]+Select a worktree/);
   assert.match(result.stdout, /Cmd\+K or \/[ ]+Search Markdown in the selected worktree/);
@@ -195,8 +195,8 @@ test("Stop hook passes session and turn identity through the private worker job"
   assert.match(history.revisions[0].beforeContentHash, /^[a-f0-9]{64}$/);
   const renderedPath = path.join(current.cache, ...new URL(entry.href, "http://mdview.local").pathname.split("/").filter(Boolean));
   const renderedHtml = await readFile(renderedPath, "utf8");
-  assert.match(renderedHtml, /-# Before/);
-  assert.match(renderedHtml, /\+# After/);
+  assert.match(renderedHtml, /<h1[^>]*data-diff-kind="removed"[^>]*>.*Before/);
+  assert.match(renderedHtml, /<h1[^>]*data-diff-kind="added"[^>]*>.*After/);
 });
 
 test("a failed hook worker retains its job until a successful retry", async (t) => {
