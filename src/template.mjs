@@ -78,6 +78,52 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
       </section>
     </div>`
     : "";
+  const documentSearchShortcut = workspaceScoped
+    ? `<div><dt><span><kbd>⌘ K</kbd><i>または</i><kbd>/</kbd></span></dt><dd>Markdownを検索</dd></div>`
+    : "";
+  const shortcutsOverlay = `<div class="mdv-search-overlay mdv-shortcuts-overlay" data-shortcuts-overlay hidden>
+      <section class="mdv-shortcuts-dialog" id="mdv-shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="mdv-shortcuts-title" aria-keyshortcuts="?">
+        <header class="mdv-shortcuts-header">
+          <div><span>Help</span><h2 id="mdv-shortcuts-title">Keyboard shortcuts</h2></div>
+          <button type="button" data-action="close-shortcuts" aria-label="ショートカットヘルプを閉じる">${icon("close-circle-linear")}</button>
+        </header>
+        <div class="mdv-shortcuts-groups">
+          <section>
+            <h3>履歴を移動</h3>
+            <dl>
+              <div><dt><kbd>P</kbd></dt><dd>${workspaceScoped ? "前の作業へ" : "前の版へ"}</dd></div>
+              <div><dt><kbd>N</kbd></dt><dd>${workspaceScoped ? "次の作業へ" : "次の版へ"}</dd></div>
+            </dl>
+          </section>
+          <section>
+            <h3>表示を切り替え</h3>
+            <dl>
+              <div><dt><span><kbd>R</kbd><i>または</i><kbd>1</kbd></span></dt><dd>Read</dd></div>
+              <div><dt><span><kbd>C</kbd><i>または</i><kbd>2</kbd></span></dt><dd>Changes</dd></div>
+            </dl>
+          </section>
+          <section>
+            <h3>文書・ワークツリーを探す</h3>
+            <dl>
+              ${documentSearchShortcut}
+              <div><dt><kbd>⇧ ⌘ K</kbd></dt><dd>ワークツリーを選択</dd></div>
+            </dl>
+          </section>
+          <section>
+            <h3>パレットの操作</h3>
+            <dl>
+              <div><dt><span><kbd>↑</kbd><kbd>↓</kbd></span></dt><dd>項目を選択</dd></div>
+              <div><dt><kbd>Enter</kbd></dt><dd>開く</dd></div>
+              <div><dt><kbd>Esc</kbd></dt><dd>閉じる</dd></div>
+            </dl>
+          </section>
+        </div>
+        <footer class="mdv-shortcuts-footer">
+          <span><kbd>?</kbd><i>または</i><kbd>Esc</kbd> ヘルプを閉じる</span>
+          <small>入力欄では単キーショートカットは無効です</small>
+        </footer>
+      </section>
+    </div>`;
   return `<!doctype html>
 <html lang="ja">
 <head>
@@ -148,6 +194,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
         <footer class="mdv-search-help"><span><kbd>↑</kbd><kbd>↓</kbd> 選択</span><span><kbd>Enter</kbd> 開く</span><span><kbd>Esc</kbd> 閉じる</span></footer>
       </section>
     </div>
+    ${shortcutsOverlay}
     <div class="mdv-toast" role="status" aria-live="polite"></div>
   </div>
   <script src="${assets.mermaidScript}"></script>
