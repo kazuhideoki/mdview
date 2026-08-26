@@ -82,9 +82,18 @@ async function renderNode(node, state, topLevel = false) {
       const language = normalizeLanguage(node.lang);
       let highlighted;
       try {
-        highlighted = await codeToHtml(node.value, { lang: language, theme: SHIKI_THEME });
+        highlighted = await codeToHtml(node.value, {
+          lang: language,
+          theme: SHIKI_THEME,
+          decorations: (node.data?.mdviewInlineDiffRanges ?? []).map((range) => ({
+            start: range.start,
+            end: range.end,
+            properties: { class: "mdv-inline-diff" },
+            alwaysWrap: true,
+          })),
+        });
       } catch {
-        highlighted = `<pre class="shiki"><code>${escape(node.value)}</code></pre>`;
+        highlighted = `<pre class="shiki"><code>${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code></pre>`;
       }
       const lines = node.value.split("\n").length;
       const collapsible = lines > 12 ? " data-collapsible=\"true\"" : "";
@@ -104,7 +113,7 @@ async function renderNode(node, state, topLevel = false) {
     case "thematicBreak":
       return `<hr class="mdv-separator"${diffAttr}${sourceAttrs}>`;
     case "html":
-      return `<pre class="mdv-block mdv-raw-html"${diffAttr}${sourceAttrs}><code>${escape(node.value)}</code></pre>`;
+      return `<pre class="mdv-block mdv-raw-html"${diffAttr}${sourceAttrs}><code>${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code></pre>`;
     default:
       return renderInline(node, state);
   }
