@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { changedLinesFromPatch, lineChangesFromPatch, parseMarkdown } from "../src/document.mjs";
+import { normalizeHtmlFragment, sanitizeRawHtml } from "../src/raw-html.mjs";
 import { renderDocument } from "../src/render-document.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -71,6 +72,56 @@ test("outline candidate filtering excludes headings inside removed compound bloc
   assert.match(viewerSource, /heading[.]closest\('\[data-diff-kind="removed"\]'\)/);
 });
 
+test("renders allowlisted Markdown HTML and strips executable attributes", async () => {
+  const rendered = await renderDocument(parseMarkdown([
+    '<div align="center" onclick="alert(1)" style="display:none">',
+    "",
+    '  <h1>Rendered title</h1>',
+    "",
+    '  <a href="javascript:alert(1)" target="_blank">unsafe link</a>',
+    "",
+    '  <script>alert("unsafe")</script>',
+    "",
+    "</div>",
+    "",
+    "Press <kbd>Enter</kbd>.",
+    "",
+  ].join("\n")));
+
+  assert.match(rendered.html, /<div align="center">/);
+  assert.match(rendered.html, /<h1>Rendered title<\/h1>/);
+  assert.match(rendered.html, /<a href="#">unsafe link<\/a>/);
+  assert.match(rendered.html, /alert\(&quot;unsafe&quot;\)/);
+  assert.match(rendered.html, /Press <kbd>Enter<\/kbd>[.]/);
+  assert.doesNotMatch(rendered.html, /onclick=|style=|target=|<script>/);
+});
+
+test("keeps previous raw HTML inert while current split containers remain structural", async () => {
+  const removed = await renderDocument(parseMarkdown('<div align="center">\n'), {
+    diffLines: [1],
+    diffKind: "removed",
+  });
+  const added = await renderDocument(parseMarkdown('<div align="right">\n'), {
+    diffLines: [1],
+    diffKind: "added",
+  });
+  assert.match(removed.html, /mdv-raw-html-diff[^>]+data-diff-kind="removed"/);
+  assert.doesNotMatch(removed.html, /<div align="center">/);
+  assert.match(added.html, /mdv-raw-html-diff[^>]+data-diff-kind="added"/);
+  assert.match(added.html, /<div align="right">/);
+
+  const normalized = normalizeHtmlFragment(`${removed.html}${added.html}<p>Text</p></div>`);
+  assert.doesNotMatch(normalized, /<div align="center">/);
+  assert.equal((normalized.match(/<div align="right">/g) ?? []).length, 1);
+  assert.match(normalized, /<div align="right"><p>Text<\/p><\/div>/);
+});
+
+test("uses HTML5 tokenization for quoted delimiters and balances the final fragment", async () => {
+  const sanitized = await sanitizeRawHtml('<div title="a > b"><img src="jav&#x61;script:alert(1)" alt="x > y"></div>');
+  assert.equal(sanitized, '<div title="a &gt; b"><img src="#" alt="x &gt; y"></div>');
+  assert.equal(normalizeHtmlFragment('</div><p>After</p>'), '<p>After</p>');
+});
+
 test("renders unique heading ids, GFM, highlighted code, and relative images outside the repo", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-"));
   const cache = path.join(root, "cache");
@@ -79,8 +130,9 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
   const docs = path.join(repo, "docs");
   await mkdir(docs, { recursive: true });
   await writeFile(path.join(docs, "pixel.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  await writeFile(path.join(docs, "hidden.png"), Buffer.from([0x89, 0x50, 0x4e, 0x48]));
   const markdownPath = path.join(docs, "guide.markdown");
-  await writeFile(markdownPath, `# Same\n\n- [x] done\n\n## Same\n\n![pixel](./pixel.png)\n\n\`\`\`js\nconst answer = 42\n\`\`\`\n`);
+  await writeFile(markdownPath, `# Same\n\n- [x] done\n\n## Same\n\n<!-- <img src="./hidden.png"> -->\n\n<script><img src="./hidden.png"></script>\n\n<div align="center">\n\n  <img src="./pixel.png" width="128" alt="pixel html" />\n\n  ![pixel](./pixel.png)\n\n</div>\n\n\`\`\`js\nconst answer = 42\n\`\`\`\n`);
 
   const previousCache = process.env.MDVIEW_CACHE_DIR;
   process.env.MDVIEW_CACHE_DIR = cache;
@@ -100,9 +152,12 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     const html = await readFile(result.outputPath, "utf8");
     assert.match(html, /id="same"/);
     assert.match(html, /id="same-2"/);
-    assert.match(html, /type="checkbox" disabled checked/);
+    assert.match(html, /<input[^>]+type="checkbox"[^>]+disabled=""[^>]+checked=""/);
     assert.match(html, /class="shiki/);
     assert.match(html, /src="[.]\/_assets\/[a-f0-9]+[.]png"/);
+    assert.match(html, /<div align="center">/);
+    assert.match(html, /<img src="[.]\/_assets\/[a-f0-9]+[.]png" width="128" alt="pixel html">/);
+    assert.doesNotMatch(html, /&lt;div\b/);
     assert.match(html, /data-view-target="read"[^>]+aria-keyshortcuts="R 1"[^>]+title="Read \(R \/ 1\)"/);
     assert.match(html, /data-view-target="changes"[^>]+aria-keyshortcuts="C 2"[^>]+title="Changes \(C \/ 2\)"/);
     assert.doesNotMatch(html, /data-view-target="raw"|mdv-raw-diff|Raw diff/);
@@ -156,6 +211,7 @@ test("renders unique heading ids, GFM, highlighted code, and relative images out
     const copiedAsset = path.join(path.dirname(result.outputPath), "_assets", copied[0]);
     await unlink(copiedAsset);
     await unlink(path.join(docs, "pixel.png"));
+    await unlink(path.join(docs, "hidden.png"));
     await unlink(markdownPath);
     const rerendered = await renderHistoryRevision(result.catalogEntry.id, result.historyRevision.id, {
       historyRoot,
