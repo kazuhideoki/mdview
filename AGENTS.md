@@ -24,7 +24,7 @@ In the reading view, preserve Markdown's structural markers such as list bullets
 
 In Changes view, render list differences at list-item granularity, like table row differences. Keep unchanged items once inside a single list and show only changed items as removed/added; do not replace the entire list when one item changes.
 
-In Changes view, emphasize the changed words or phrases inside unambiguous removed/added replacements with a stronger semantic background. Keep the softer row or block background for context, preserve semantic child boundaries such as table cells, and fail soft to row or block highlighting for unpaired, ambiguous, or unusually large comparisons.
+In Changes view, emphasize the changed words or phrases whenever removed and added content can be paired as a replacement, including fenced code blocks. Keep the softer row or block background for context, align mixed insertion-and-replacement groups by content similarity and order, preserve semantic child boundaries such as table cells, and leave pure insertions, pure deletions, or unusually large comparisons at row or block highlighting.
 
 For item-level list differences, do not also show a list-level modified accent. Keep the changed item's bullet or ordered marker visible inside the removed/added background, place an aligned `+` or `-` marker to its left, and keep changed and unchanged item text on the same reading axis.
 
