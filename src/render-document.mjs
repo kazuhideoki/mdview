@@ -1,6 +1,7 @@
 import { escape } from "html-escaper";
 import { codeToHtml } from "shiki";
 import { collectHeadings, collectInlineText, createSlugger, rangeHasChange } from "./document.mjs";
+import { sanitizeRawHtml } from "./raw-html.mjs";
 
 const SHIKI_THEME = "vitesse-dark";
 
@@ -39,6 +40,7 @@ export async function renderDocument(tree, { changedLines = [], diffLines = [], 
 
 async function renderNode(node, state, topLevel = false) {
   const changed = rangeHasChange(node, state.changedLineSet);
+  const diffChanged = rangeHasChange(node, state.diffLineSet);
   const changeAttr = changed && !node.data?.mdviewMergedDiff ? ' data-change="modified"' : "";
   const diffAttr = topLevel && !node.data?.mdviewMergedDiff && state.diffKind && rangeHasChange(node, state.diffLineSet)
     ? ` data-diff-kind="${state.diffKind}"`
@@ -112,8 +114,12 @@ async function renderNode(node, state, topLevel = false) {
       return `<td>${await renderInlineChildren(node.children ?? [], state)}</td>`;
     case "thematicBreak":
       return `<hr class="mdv-separator"${diffAttr}${sourceAttrs}>`;
-    case "html":
-      return `<pre class="mdv-block mdv-raw-html"${diffAttr}${sourceAttrs}><code>${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code></pre>`;
+    case "html": {
+      const sanitized = node.data?.mdviewSanitizedHtml ? node.value : await sanitizeRawHtml(node.value);
+      if (!topLevel || !diffChanged || !state.diffKind) return sanitized;
+      const diffSource = `<pre class="mdv-block mdv-raw-html-diff"${diffAttr}${sourceAttrs}><code>${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code></pre>`;
+      return state.diffKind === "removed" ? diffSource : `${diffSource}${sanitized}`;
+    }
     default:
       return renderInline(node, state);
   }
@@ -161,6 +167,8 @@ async function renderInline(node, state) {
       return `<img src="${safeHref(node.url)}" alt="${escape(node.alt ?? "")}" loading="lazy">`;
     case "break":
       return "<br>";
+    case "html":
+      return node.data?.mdviewSanitizedHtml ? node.value : sanitizeRawHtml(node.value);
     default:
       if (node.children) return renderInlineChildren(node.children, state);
       return typeof node.value === "string" ? escape(node.value) : "";

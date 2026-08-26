@@ -211,7 +211,7 @@
   .mdv-blockquote { position: relative; margin: 1.5em 0; padding: 1px 0 1px 18px; color: #c4c6c0; border-left: 3px solid var(--mdv-accent-dim); }
   .mdv-blockquote p { margin: .65em 0; }
   .mdv-separator { margin: 2.5em 0; border: 0; border-top: 1px solid var(--mdv-border); }
-  .mdv-raw-html { white-space: pre-wrap; }
+  .mdv-raw-html-diff { display: none; white-space: pre-wrap; }
 }
 
 @layer components {
@@ -249,6 +249,10 @@
   [data-change="modified"] { --mdv-change-color: var(--mdv-modified); }
   .mdv-document-body > [data-diff-kind="removed"] { display: none; }
   .mdv-app[data-view="changes"] .mdv-heading[data-change="modified"]::after { content: "変更"; display: inline-flex; margin-left: 12px; padding: 4px 8px 3px; translate: 0 -3px; color: var(--mdv-modified); border: 1px solid #765d1d; border-radius: 3px; font: 600 11px/1 var(--mdv-font-sans); }
+  .mdv-app[data-view="changes"] .mdv-raw-html-diff { position: relative; display: block; margin: .45em 0; padding: .35em .55em; border-left: 2px solid var(--mdv-diff-color); background: var(--mdv-diff-bg); color: #c6c8c3; font: 13px/1.6 var(--mdv-font-mono); }
+  .mdv-app[data-view="changes"] .mdv-raw-html-diff::before { content: attr(data-diff-marker); position: absolute; left: -25px; top: .35em; width: 18px; color: var(--mdv-diff-color); text-align: center; font-weight: 750; }
+  .mdv-app[data-view="changes"] .mdv-raw-html-diff[data-diff-kind="removed"]::before { content: "-"; }
+  .mdv-app[data-view="changes"] .mdv-raw-html-diff[data-diff-kind="added"]::before { content: "+"; }
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind="removed"] { display: block; }
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind] { position: relative; border-left: 2px solid var(--mdv-diff-color); background: var(--mdv-diff-bg); }
   .mdv-app[data-view="changes"] .mdv-document-body > [data-diff-kind]::before { content: attr(data-diff-marker); position: absolute; left: -25px; top: .18em; bottom: auto; width: 18px; height: auto; background: transparent; color: var(--mdv-diff-color); text-align: center; font: 750 .82em/1.6 var(--mdv-font-mono); }

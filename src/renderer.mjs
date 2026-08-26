@@ -23,6 +23,7 @@ import {
   storeHistorySnapshot,
 } from "./history.mjs";
 import { cacheRoot, catalogRoot, documentOutputPath, documentUrl } from "./paths.mjs";
+import { normalizeHtmlFragment, sanitizeRawHtml } from "./raw-html.mjs";
 import { renderDocument } from "./render-document.mjs";
 import { discoverMergeSources } from "./repository-lineage.mjs";
 import { pageTemplate } from "./template.mjs";
@@ -446,6 +447,7 @@ async function renderMarkdownPage({
     });
     rendered.html = interleaveRevisionBlocks(rendered.blocks, beforeRendered.blocks, lineChanges.hunks);
   }
+  rendered.html = normalizeHtmlFragment(rendered.html);
   meta.changeCount = rendered.changeCount;
   meta.updatedLabel = updatedLabel;
   const assets = await ensureAssets();
@@ -1146,43 +1148,63 @@ async function prepareLocalImages(tree, markdownPath, meta, outputDir, options =
   const resolvedAssets = {};
   visit(tree, "image", (node) => nodes.push(node));
   for (const node of nodes) {
-    if (!node.url || /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(node.url)) continue;
-    const originalUrl = node.url;
-    const savedUrl = options.savedAssets?.[originalUrl];
-    if (/^[.]\/_assets\/[a-f0-9]{20}[.][a-z0-9]+$/i.test(savedUrl || "")) {
-      const savedTarget = path.resolve(outputDir, savedUrl);
-      try {
-        await restoreHistoryCacheArtifact(savedTarget, {
-          ...(options.historyOptions || {}),
-          cacheRoot: cacheRoot(),
-        });
-        node.url = savedUrl;
-        resolvedAssets[originalUrl] = savedUrl;
-        continue;
-      } catch (error) {
-        if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
-      }
-    }
-    const sourcePath = path.resolve(path.dirname(markdownPath), decodeURIComponent(node.url));
-    let canonical;
-    try {
-      canonical = await realpath(sourcePath);
-    } catch {
-      continue;
-    }
-    const allowedRoot = await realpath(meta.repoRoot || path.dirname(markdownPath));
-    if (canonical !== allowedRoot && !canonical.startsWith(`${allowedRoot}${path.sep}`)) continue;
-    if (!(await stat(canonical)).isFile()) continue;
-    const extension = path.extname(canonical).toLowerCase().replace(/[^.a-z0-9]/g, "");
-    const name = `${createHash("sha256").update(await readFile(canonical)).digest("hex").slice(0, 20)}${extension}`;
-    const assetDir = path.join(outputDir, "_assets");
-    const target = path.join(assetDir, name);
-    await mkdir(assetDir, { recursive: true });
-    await copyFile(canonical, target);
-    node.url = `./_assets/${name}`;
-    resolvedAssets[originalUrl] = node.url;
+    const prepared = await prepareLocalImage(node.url, markdownPath, meta, outputDir, options);
+    node.url = prepared.url;
+    if (prepared.savedUrl) resolvedAssets[prepared.originalUrl] = prepared.savedUrl;
+  }
+  const htmlNodes = [];
+  visit(tree, "html", (node) => htmlNodes.push(node));
+  for (const node of htmlNodes) {
+    node.value = await sanitizeRawHtml(node.value, { resolveImage: async (url) => {
+      const prepared = await prepareLocalImage(url, markdownPath, meta, outputDir, options);
+      if (prepared.savedUrl) resolvedAssets[prepared.originalUrl] = prepared.savedUrl;
+      return prepared.url;
+    } });
+    node.data ||= {};
+    node.data.mdviewSanitizedHtml = true;
   }
   return resolvedAssets;
+}
+
+async function prepareLocalImage(url, markdownPath, meta, outputDir, options) {
+  if (!url || /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(url)) return { url };
+  const originalUrl = url;
+  const savedUrl = options.savedAssets?.[originalUrl];
+  if (/^[.]\/_assets\/[a-f0-9]{20}[.][a-z0-9]+$/i.test(savedUrl || "")) {
+    const savedTarget = path.resolve(outputDir, savedUrl);
+    try {
+      await restoreHistoryCacheArtifact(savedTarget, {
+        ...(options.historyOptions || {}),
+        cacheRoot: cacheRoot(),
+      });
+      return { url: savedUrl, originalUrl, savedUrl };
+    } catch (error) {
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
+    }
+  }
+  let sourcePath;
+  try {
+    sourcePath = path.resolve(path.dirname(markdownPath), decodeURIComponent(url));
+  } catch {
+    return { url };
+  }
+  let canonical;
+  try {
+    canonical = await realpath(sourcePath);
+  } catch {
+    return { url };
+  }
+  const allowedRoot = await realpath(meta.repoRoot || path.dirname(markdownPath));
+  if (canonical !== allowedRoot && !canonical.startsWith(`${allowedRoot}${path.sep}`)) return { url };
+  if (!(await stat(canonical)).isFile()) return { url };
+  const extension = path.extname(canonical).toLowerCase().replace(/[^.a-z0-9]/g, "");
+  const name = `${createHash("sha256").update(await readFile(canonical)).digest("hex").slice(0, 20)}${extension}`;
+  const assetDir = path.join(outputDir, "_assets");
+  const target = path.join(assetDir, name);
+  await mkdir(assetDir, { recursive: true });
+  await copyFile(canonical, target);
+  const preparedUrl = `./_assets/${name}`;
+  return { url: preparedUrl, originalUrl, savedUrl: preparedUrl };
 }
 
 async function prepareD2Diagrams(tree, outputDir) {
