@@ -377,7 +377,7 @@ test("highlights changed words inside paired paragraph replacements", async () =
   }
 });
 
-test("does not infer inline pairs across ambiguous multi-block replacements", async () => {
+test("pairs equal multi-block replacements by order when no content anchor remains", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-inline-ambiguous-"));
   const cache = path.join(root, "cache");
   const historyRoot = path.join(root, "history");
@@ -401,7 +401,77 @@ test("does not infer inline pairs across ambiguous multi-block replacements", as
     const html = await readFile(result.outputPath, "utf8");
     assert.match(html, /data-diff-kind="removed"/);
     assert.match(html, /data-diff-kind="added"/);
-    assert.doesNotMatch(html, /mdv-inline-diff/);
+    assert.match(html, /data-diff-kind="removed"[^>]*><span class="mdv-inline-diff">First legacy sentence<\/span>[.]<\/p>/);
+    assert.match(html, /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">Fresh replacement prose<\/span>[.]<\/p>/);
+    assert.match(html, /data-diff-kind="removed"[^>]*><span class="mdv-inline-diff">Second obsolete statement<\/span>[.]<\/p>/);
+    assert.match(html, /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">Different modern wording<\/span>[.]<\/p>/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("matches a replacement around an adjacent insertion by content similarity", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-inline-insertion-pairing-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "mixed.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?inline-insertion-pairing=${Date.now()}`);
+    await writeFile(markdownPath, "# Setup\n\nThe production CLI uses the legacy installation method.\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "mixed.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Setup\n\nConfirm the executable directory is on PATH.\n\nThe production CLI uses the repository symlink.\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "mixed.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.match(html, /data-diff-kind="removed"[^>]*>The production CLI uses the <span class="mdv-inline-diff">legacy installation method<\/span>[.]<\/p>/);
+    assert.match(html, /data-diff-kind="added"[^>]*>The production CLI uses the <span class="mdv-inline-diff">repository symlink<\/span>[.]<\/p>/);
+    assert.match(html, /data-diff-kind="added"[^>]*>Confirm the executable directory is on PATH[.]<\/p>/);
+    assert.doesNotMatch(html, /mdv-inline-diff[^>]*>Confirm/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("highlights inline changes inside paired fenced code blocks", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-inline-code-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "code.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?inline-code-diff=${Date.now()}`);
+    await writeFile(markdownPath, "# Setup\n\n```bash\nnpm install\nmdview legacy-mode\n```\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Setup\n\n```bash\nnpm install\nmdview repository-mode\n```\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    const removed = html.match(/<figure class="mdv-block mdv-code"[^>]*data-diff-kind="removed"[\s\S]*?<\/figure>/)?.[0] ?? "";
+    const added = html.match(/<figure class="mdv-block mdv-code"[^>]*data-diff-kind="added"[\s\S]*?<\/figure>/)?.[0] ?? "";
+    assert.match(removed, /mdv-inline-diff/);
+    assert.match(removed, /legacy/);
+    assert.match(added, /mdv-inline-diff/);
+    assert.match(added, /repository/);
+    assert.doesNotMatch(html, /mdv-inline-diff[^>]*>[\s\S]*?npm install[\s\S]*?<\/span>/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;
@@ -569,6 +639,38 @@ test("renders a changed Markdown list as item-level changes in one list", async 
     assert.equal((html.match(/class="mdv-list-structural-marker" aria-hidden="true">•<\/span>/g) ?? []).length, 2);
     assert.doesNotMatch(html, /<ul[^>]*data-diff-kind/);
     assert.doesNotMatch(html, /<ul[^>]*data-change/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("highlights every paired item in a multi-item list replacement", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-list-multi-inline-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "multi-list.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?list-multi-inline=${Date.now()}`);
+    await writeFile(markdownPath, "# Notes\n\n- Stable start\n- First legacy value\n- Second legacy value\n- Stable end\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "lists", branch: "main", relativePath: "multi-list.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Notes\n\n- Stable start\n- First current value\n- Second current value\n- Stable end\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "lists", branch: "main", relativePath: "multi-list.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.match(html, /data-diff-kind="removed"[^>]*>.*First <span class="mdv-inline-diff">legacy<\/span> value/);
+    assert.match(html, /data-diff-kind="added"[^>]*>.*First <span class="mdv-inline-diff">current<\/span> value/);
+    assert.match(html, /data-diff-kind="removed"[^>]*>.*Second <span class="mdv-inline-diff">legacy<\/span> value/);
+    assert.match(html, /data-diff-kind="added"[^>]*>.*Second <span class="mdv-inline-diff">current<\/span> value/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

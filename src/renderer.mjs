@@ -38,6 +38,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const MAX_INLINE_DIFF_LCS_CELLS = 250_000;
+const MIN_REPLACEMENT_PAIR_SIMILARITY = 0.2;
 
 export async function renderMarkdownFile(inputPath, options = {}) {
   const absolutePath = path.resolve(options.cwd || process.cwd(), inputPath);
@@ -573,20 +574,10 @@ function markInlineDiffs(currentTree, previousTree, currentDiffLines, previousDi
       && overlapsDiffPositions(node, hunk.addedAt, "newLine"));
     const previousRun = previousBlocks.filter((node) => !usedPrevious.has(node)
       && overlapsDiffPositions(node, hunk.removedAt, "oldLine"));
-    const proposals = previousRun.flatMap((previous) => {
-      const projectedNewLines = hunk.removedAt
-        .filter((position) => lineFallsInside(position.oldLine, previous))
-        .map((position) => position.newLine);
-      const candidates = currentRun.filter((current) => current.type === previous.type
-        && projectedNewLines.some((line) => lineFallsInside(line, current)));
-      return candidates.length === 1 ? [{ previous, current: candidates[0] }] : [];
-    });
-    for (const proposal of proposals) {
-      if (proposals.filter(({ current }) => current === proposal.current).length !== 1) continue;
-      if (proposals.length > 1 && !hasSharedInlineToken(proposal.previous, proposal.current)) continue;
-      markInlineTextChanges(proposal.previous, proposal.current);
-      usedCurrent.add(proposal.current);
-      usedPrevious.add(proposal.previous);
+    for (const [previous, current] of pairReplacementNodes(previousRun, currentRun)) {
+      markInlineTextChanges(previous, current);
+      usedCurrent.add(current);
+      usedPrevious.add(previous);
     }
   }
 }
@@ -621,14 +612,91 @@ function lineFallsInside(line, node) {
   return line >= node.position.start.line && line <= node.position.end.line;
 }
 
-function hasSharedInlineToken(previousNode, currentNode) {
-  const previousTokens = diffTokens(inlineTextLayouts(previousNode).map(({ value }) => value).join("\n"));
-  const currentTokens = diffTokens(inlineTextLayouts(currentNode).map(({ value }) => value).join("\n"));
-  if (!previousTokens || !currentTokens) return false;
-  const comparablePrevious = new Set(previousTokens
-    .map(({ value }) => value)
-    .filter((value) => /[\p{L}\p{N}]/u.test(value)));
-  return currentTokens.some(({ value }) => comparablePrevious.has(value));
+function pairReplacementNodes(previousNodes, currentNodes) {
+  const anchors = weightedReplacementAnchors(previousNodes, currentNodes);
+  const pairs = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+  for (const [nextPrevious, nextCurrent] of [...anchors, [previousNodes.length, currentNodes.length]]) {
+    const previousGap = previousNodes.slice(previousIndex, nextPrevious);
+    const currentGap = currentNodes.slice(currentIndex, nextCurrent);
+    if (previousGap.length === currentGap.length
+      && previousGap.every((node, index) => canCompareInlineNodes(node, currentGap[index]))) {
+      for (let index = 0; index < previousGap.length; index += 1) {
+        pairs.push([previousGap[index], currentGap[index]]);
+      }
+    }
+    if (nextPrevious < previousNodes.length && nextCurrent < currentNodes.length) {
+      pairs.push([previousNodes[nextPrevious], currentNodes[nextCurrent]]);
+    }
+    previousIndex = nextPrevious + 1;
+    currentIndex = nextCurrent + 1;
+  }
+  return pairs;
+}
+
+function weightedReplacementAnchors(previousNodes, currentNodes) {
+  const scores = Array.from({ length: previousNodes.length + 1 }, () => Array(currentNodes.length + 1).fill(0));
+  const choices = Array.from({ length: previousNodes.length + 1 }, () => Array(currentNodes.length + 1).fill(null));
+  for (let previousIndex = previousNodes.length - 1; previousIndex >= 0; previousIndex -= 1) {
+    for (let currentIndex = currentNodes.length - 1; currentIndex >= 0; currentIndex -= 1) {
+      const skipPrevious = scores[previousIndex + 1][currentIndex];
+      const skipCurrent = scores[previousIndex][currentIndex + 1];
+      const similarity = replacementSimilarity(previousNodes[previousIndex], currentNodes[currentIndex]);
+      const pair = similarity >= MIN_REPLACEMENT_PAIR_SIMILARITY
+        ? similarity + scores[previousIndex + 1][currentIndex + 1]
+        : Number.NEGATIVE_INFINITY;
+      scores[previousIndex][currentIndex] = Math.max(skipPrevious, skipCurrent, pair);
+      choices[previousIndex][currentIndex] = pair > skipPrevious && pair > skipCurrent
+        ? "pair"
+        : skipPrevious >= skipCurrent ? "previous" : "current";
+    }
+  }
+  const anchors = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+  while (previousIndex < previousNodes.length && currentIndex < currentNodes.length) {
+    const choice = choices[previousIndex][currentIndex];
+    if (choice === "pair") {
+      anchors.push([previousIndex, currentIndex]);
+      previousIndex += 1;
+      currentIndex += 1;
+    } else if (choice === "previous") previousIndex += 1;
+    else currentIndex += 1;
+  }
+  return anchors;
+}
+
+function replacementSimilarity(previousNode, currentNode) {
+  if (!canCompareInlineNodes(previousNode, currentNode)) return Number.NEGATIVE_INFINITY;
+  const previousTokens = comparableTokens(comparableNodeText(previousNode));
+  const currentTokens = comparableTokens(comparableNodeText(currentNode));
+  if (previousTokens.length === 0 || currentTokens.length === 0) return 0;
+  const remaining = new Map();
+  for (const token of previousTokens) remaining.set(token, (remaining.get(token) ?? 0) + 1);
+  let shared = 0;
+  for (const token of currentTokens) {
+    const count = remaining.get(token) ?? 0;
+    if (count === 0) continue;
+    shared += 1;
+    remaining.set(token, count - 1);
+  }
+  return (2 * shared) / (previousTokens.length + currentTokens.length);
+}
+
+function comparableTokens(value) {
+  return (diffTokens(value) ?? [])
+    .map(({ value: token }) => token.toLocaleLowerCase("und"))
+    .filter((token) => /[\p{L}\p{N}]/u.test(token));
+}
+
+function comparableNodeText(node) {
+  if (["code", "html"].includes(node.type) && typeof node.value === "string") return node.value;
+  return inlineTextLayouts(node).map(({ value }) => value).join("\n");
+}
+
+function canCompareInlineNodes(previousNode, currentNode) {
+  return semanticInlinePairs(previousNode, currentNode).length > 0;
 }
 
 function markInlineTextChanges(previousNode, currentNode) {
@@ -645,7 +713,11 @@ function markInlineTextChanges(previousNode, currentNode) {
 
 function semanticInlinePairs(previousNode, currentNode) {
   if (previousNode.type !== currentNode.type) return [];
-  if (["paragraph", "heading", "tableCell"].includes(previousNode.type)) {
+  if (["paragraph", "heading", "tableCell", "html"].includes(previousNode.type)) {
+    return [[previousNode, currentNode]];
+  }
+  if (previousNode.type === "code") {
+    if (["mermaid", "d2"].includes(previousNode.lang) || previousNode.lang !== currentNode.lang) return [];
     return [[previousNode, currentNode]];
   }
   if (!["tableRow", "listItem", "blockquote"].includes(previousNode.type)) return [];
@@ -657,6 +729,9 @@ function semanticInlinePairs(previousNode, currentNode) {
 }
 
 function inlineTextLayouts(node) {
+  if (["code", "html"].includes(node.type) && typeof node.value === "string") {
+    return [{ value: node.value, leaves: [{ node, start: 0, end: node.value.length }] }];
+  }
   const layouts = [{ value: "", leaves: [] }];
   const append = (child) => {
     if (["text", "inlineCode"].includes(child.type) && typeof child.value === "string") {
@@ -819,16 +894,7 @@ function mergeListItems(currentItems, previousItems, { ordered, currentStart, pr
   for (const [nextPrevious, nextCurrent] of [...matches, [previousItems.length, currentItems.length]]) {
     const previousRun = previousItems.slice(previousIndex, nextPrevious);
     const currentRun = currentItems.slice(currentIndex, nextCurrent);
-    const inlinePair = previousRun.length === 1 && currentRun.length === 1;
-    if (previousRun.length === currentRun.length) {
-      for (let index = 0; index < previousRun.length; index += 1) {
-        merged.push(markListItem(previousRun[index], "removed", inlinePair));
-        merged.push(markListItem(currentRun[index], "added", inlinePair));
-      }
-    } else {
-      merged.push(...previousRun.map((item) => markListItem(item, "removed")));
-      merged.push(...currentRun.map((item) => markListItem(item, "added")));
-    }
+    merged.push(...mergeReplacementRun(previousRun, currentRun, markListItem));
     previousIndex = nextPrevious;
     currentIndex = nextCurrent;
     if (nextPrevious < previousItems.length && nextCurrent < currentItems.length) {
@@ -837,6 +903,26 @@ function mergeListItems(currentItems, previousItems, { ordered, currentStart, pr
       currentIndex = nextCurrent + 1;
     }
   }
+  return merged;
+}
+
+function mergeReplacementRun(previousNodes, currentNodes, marker) {
+  const pairs = pairReplacementNodes(previousNodes, currentNodes);
+  const merged = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+  for (const [previous, current] of pairs) {
+    const nextPrevious = previousNodes.indexOf(previous, previousIndex);
+    const nextCurrent = currentNodes.indexOf(current, currentIndex);
+    merged.push(...previousNodes.slice(previousIndex, nextPrevious).map((node) => marker(node, "removed")));
+    merged.push(...currentNodes.slice(currentIndex, nextCurrent).map((node) => marker(node, "added")));
+    merged.push(marker(previous, "removed", true));
+    merged.push(marker(current, "added", true));
+    previousIndex = nextPrevious + 1;
+    currentIndex = nextCurrent + 1;
+  }
+  merged.push(...previousNodes.slice(previousIndex).map((node) => marker(node, "removed")));
+  merged.push(...currentNodes.slice(currentIndex).map((node) => marker(node, "added")));
   return merged;
 }
 
@@ -856,16 +942,7 @@ function mergeTableRows(currentRows, previousRows) {
   for (const [nextPrevious, nextCurrent] of [...matches, [previousRows.length, currentRows.length]]) {
     const previousRun = previousRows.slice(previousIndex, nextPrevious);
     const currentRun = currentRows.slice(currentIndex, nextCurrent);
-    const inlinePair = previousRun.length === 1 && currentRun.length === 1;
-    if (previousRun.length === currentRun.length) {
-      for (let index = 0; index < previousRun.length; index += 1) {
-        merged.push(markTableRow(previousRun[index], "removed", inlinePair));
-        merged.push(markTableRow(currentRun[index], "added", inlinePair));
-      }
-    } else {
-      merged.push(...previousRun.map((row) => markTableRow(row, "removed")));
-      merged.push(...currentRun.map((row) => markTableRow(row, "added")));
-    }
+    merged.push(...mergeReplacementRun(previousRun, currentRun, markTableRow));
     previousIndex = nextPrevious;
     currentIndex = nextCurrent;
     if (nextPrevious < previousRows.length && nextCurrent < currentRows.length) {
