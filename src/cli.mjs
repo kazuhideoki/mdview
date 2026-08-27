@@ -116,6 +116,10 @@ async function demoCommand() {
     .replace("境界を定義し、プロセス間", "境界を説明し、プロセス間")
     .replace("デプロイ単位かつ障害ドメインの単位で定義します。", "デプロイ単位で定義します。")
     .replace("タイムアウトは呼び出し側で明示的に設定します。", "タイムアウトは既定値を使用します。")
+    .replace(
+      "  responsibilities: string[];\n  endpoints: HttpEndpoint[];",
+      "  responsibilities: string;\n  timeoutMs: number;",
+    )
     .replace("キュー（非同期）", "キュー");
   const demoSessionId = `demo-${randomUUID()}`;
   const renderedAt = Date.now();

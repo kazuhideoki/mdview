@@ -138,6 +138,12 @@ test("demo renders two revisions and opens the inline Changes view", async (t) =
   assert.match(renderedHtml, /<li data-diff-kind="removed"[^>]*>.*タイムアウトは<span class="mdv-inline-diff">既定値を使用<\/span>します。<\/p><\/li>/);
   assert.match(renderedHtml, /<li data-diff-kind="added"[^>]*>.*タイムアウトは<span class="mdv-inline-diff">呼び出し側で明示的に設定<\/span>します。<\/p><\/li>/);
   assert.doesNotMatch(renderedHtml, /<ul[^>]*data-diff-kind/);
+  assert.equal((renderedHtml.match(/<figure class="mdv-block mdv-code"/g) ?? []).length, 1);
+  assert.match(renderedHtml, /class="line" data-line-number="4" data-diff-kind="removed"/);
+  assert.match(renderedHtml, /class="line" data-line-number="4" data-diff-kind="added"/);
+  assert.match(renderedHtml, /class="line" data-line-number="5" data-diff-kind="removed"/);
+  assert.match(renderedHtml, /class="line" data-line-number="5" data-diff-kind="added"/);
+  assert.doesNotMatch(renderedHtml, /<figure class="mdv-block mdv-code"[^>]*data-diff-kind/);
 
   const history = await readDocumentHistory(entry.id, { root: path.join(current.runtime, "history") });
   assert.equal(history.revisions.length, 2);

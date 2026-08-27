@@ -84,18 +84,17 @@ async function renderNode(node, state, topLevel = false) {
       const language = normalizeLanguage(node.lang);
       let highlighted;
       try {
-        highlighted = await codeToHtml(node.value, {
-          lang: language,
-          theme: SHIKI_THEME,
-          decorations: (node.data?.mdviewInlineDiffRanges ?? []).map((range) => ({
-            start: range.start,
-            end: range.end,
-            properties: { class: "mdv-inline-diff" },
-            alwaysWrap: true,
-          })),
-        });
+        highlighted = node.data?.mdviewCodeDiffLines
+          ? await renderCodeLineDiff(node, language)
+          : await codeToHtml(node.value, {
+            lang: language,
+            theme: SHIKI_THEME,
+            decorations: inlineDecorations(node.data?.mdviewInlineDiffRanges),
+          });
       } catch {
-        highlighted = `<pre class="shiki"><code>${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code></pre>`;
+        highlighted = node.data?.mdviewCodeDiffLines
+          ? renderPlainCodeLineDiff(node.data.mdviewCodeDiffLines)
+          : `<pre class="shiki"><code>${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code></pre>`;
       }
       const lines = node.value.split("\n").length;
       const collapsible = lines > 12 ? " data-collapsible=\"true\"" : "";
@@ -123,6 +122,53 @@ async function renderNode(node, state, topLevel = false) {
     default:
       return renderInline(node, state);
   }
+}
+
+function inlineDecorations(ranges = [], offset = 0) {
+  return ranges.map((range) => ({
+    start: offset + range.start,
+    end: offset + range.end,
+    properties: { class: "mdv-inline-diff" },
+    alwaysWrap: true,
+  }));
+}
+
+async function renderCodeLineDiff(node, language) {
+  const lines = node.data.mdviewCodeDiffLines;
+  const sources = {
+    current: node.value.split("\n"),
+    previous: node.data.mdviewCodePreviousValue.split("\n"),
+  };
+  const highlighted = {};
+  for (const source of ["current", "previous"]) {
+    const sourceLines = sources[source];
+    let offset = 0;
+    const decorations = [];
+    for (const [index, value] of sourceLines.entries()) {
+      const diffLine = lines.find((line) => line.source === source && line.sourceIndex === index);
+      decorations.push(...inlineDecorations(diffLine?.inlineRanges, offset));
+      offset += value.length + 1;
+    }
+    const html = await codeToHtml(sourceLines.join("\n"), { lang: language, theme: SHIKI_THEME, decorations });
+    highlighted[source] = shikiLineHtml(html);
+  }
+  const renderedLines = lines.map((line) => renderDiffCodeLine(highlighted[line.source]?.[line.sourceIndex] ?? escape(line.value), line));
+  return `<pre class="shiki mdv-code-line-diff"><code>${renderedLines.join("\n")}</code></pre>`;
+}
+
+function shikiLineHtml(html) {
+  return [...html.matchAll(/<span class="line">([\s\S]*?)<\/span>(?=\n|<\/code>)/g)].map((match) => match[1]);
+}
+
+function renderDiffCodeLine(content, line) {
+  const diffAttr = line.diffKind ? ` data-diff-kind="${line.diffKind}"` : "";
+  const marker = line.diffKind ? `<span class="mdv-code-diff-marker" aria-hidden="true">${line.diffKind === "removed" ? "−" : "+"}</span>` : "";
+  const label = line.diffKind ? `<span class="mdv-visually-hidden">${line.diffKind === "removed" ? "削除行: " : "追加行: "}</span>` : "";
+  return `<span class="line" data-line-number="${line.sourceIndex + 1}"${diffAttr}>${marker}${label}${content}</span>`;
+}
+
+function renderPlainCodeLineDiff(lines) {
+  return `<pre class="shiki mdv-code-line-diff"><code>${lines.map((line) => renderDiffCodeLine(renderInlineDiffValue(line.value, line.inlineRanges), line)).join("\n")}</code></pre>`;
 }
 
 async function renderChildren(children, state) {

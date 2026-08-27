@@ -431,6 +431,7 @@ async function renderMarkdownPage({
   if (beforeTree) {
     mergeTableRowDiffs(tree, beforeTree, addedDiffLines, removedDiffLines);
     mergeListItemDiffs(tree, beforeTree, addedDiffLines, removedDiffLines, lineChanges.hunks);
+    mergeCodeLineDiffs(tree, beforeTree, addedDiffLines, removedDiffLines, lineChanges.hunks);
     markInlineDiffs(tree, beforeTree, addedDiffLines, removedDiffLines, lineChanges.hunks);
   }
   const rendered = await renderDocument(tree, {
@@ -858,6 +859,167 @@ function mergeListItemDiffs(currentTree, previousTree, currentDiffLines, previou
 function changedLists(tree, diffLines) {
   const lines = new Set(diffLines);
   return (tree.children ?? []).filter((node) => node.type === "list" && rangeHasChange(node, lines));
+}
+
+function mergeCodeLineDiffs(currentTree, previousTree, currentDiffLines, previousDiffLines, hunks) {
+  const currentChanged = changedCodeBlocks(currentTree, currentDiffLines);
+  const previousChanged = changedCodeBlocks(previousTree, previousDiffLines);
+  const usedPrevious = new Set();
+
+  for (const current of currentChanged) {
+    const currentHunks = blockHunkIndexes(current, hunks, "new");
+    const matches = previousChanged
+      .map((candidate, index) => ({ candidate, index }))
+      .filter(({ candidate, index }) => !usedPrevious.has(index)
+        && candidate.lang === current.lang
+        && replacementSimilarity(candidate, current) >= MIN_REPLACEMENT_PAIR_SIMILARITY
+        && intersects(currentHunks, blockHunkIndexes(candidate, hunks, "old")));
+    if (matches.length !== 1) continue;
+
+    const [match] = matches;
+    const previous = match.candidate;
+    const previousHunks = blockHunkIndexes(previous, hunks, "old");
+    const competingCurrent = currentChanged.filter((candidate) => candidate.lang === previous.lang
+      && replacementSimilarity(previous, candidate) >= MIN_REPLACEMENT_PAIR_SIMILARITY
+      && intersects(previousHunks, blockHunkIndexes(candidate, hunks, "new")));
+    if (competingCurrent.length !== 1) continue;
+
+    const lines = mergeCodeLines(previous.value.split("\n"), current.value.split("\n"));
+    if (!lines || !lines.some((line) => line.diffKind)) continue;
+
+    usedPrevious.add(match.index);
+    current.data = {
+      ...current.data,
+      mdviewMergedDiff: true,
+      mdviewCodeDiffLines: lines,
+      mdviewCodePreviousValue: previous.value,
+    };
+    previous.data = { ...previous.data, mdviewMergedDiff: true };
+  }
+}
+
+function changedCodeBlocks(tree, diffLines) {
+  const lines = new Set(diffLines);
+  return (tree.children ?? []).filter((node) => node.type === "code"
+    && !["mermaid", "d2"].includes(node.lang)
+    && rangeHasChange(node, lines));
+}
+
+function mergeCodeLines(previousLines, currentLines) {
+  const largestSide = Math.max(previousLines.length, currentLines.length);
+  if (previousLines.length * currentLines.length > MAX_INLINE_DIFF_LCS_CELLS
+    || largestSide * largestSide > MAX_INLINE_DIFF_LCS_CELLS) return null;
+  const matches = longestCommonSubsequence(previousLines, currentLines);
+  const merged = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+
+  for (const [nextPrevious, nextCurrent] of [...matches, [previousLines.length, currentLines.length]]) {
+    merged.push(...mergeCodeLineRun(
+      previousLines.slice(previousIndex, nextPrevious),
+      currentLines.slice(currentIndex, nextCurrent),
+      previousIndex,
+      currentIndex,
+    ));
+    if (nextPrevious < previousLines.length && nextCurrent < currentLines.length) {
+      merged.push({ value: currentLines[nextCurrent], source: "current", sourceIndex: nextCurrent });
+    }
+    previousIndex = nextPrevious + 1;
+    currentIndex = nextCurrent + 1;
+  }
+  return merged;
+}
+
+function mergeCodeLineRun(previousLines, currentLines, previousOffset, currentOffset) {
+  const pairs = pairedValueIndexes(previousLines, currentLines);
+  const merged = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+  for (const [nextPrevious, nextCurrent] of [...pairs, [previousLines.length, currentLines.length]]) {
+    for (; previousIndex < nextPrevious; previousIndex += 1) {
+      merged.push(codeDiffLine(previousLines[previousIndex], "previous", previousOffset + previousIndex, "removed"));
+    }
+    for (; currentIndex < nextCurrent; currentIndex += 1) {
+      merged.push(codeDiffLine(currentLines[currentIndex], "current", currentOffset + currentIndex, "added"));
+    }
+    if (nextPrevious < previousLines.length && nextCurrent < currentLines.length) {
+      const ranges = unmatchedTokenRanges(previousLines[nextPrevious], currentLines[nextCurrent]);
+      merged.push(codeDiffLine(previousLines[nextPrevious], "previous", previousOffset + nextPrevious, "removed", ranges?.leftRanges));
+      merged.push(codeDiffLine(currentLines[nextCurrent], "current", currentOffset + nextCurrent, "added", ranges?.rightRanges));
+    }
+    previousIndex = nextPrevious + 1;
+    currentIndex = nextCurrent + 1;
+  }
+  return merged;
+}
+
+function codeDiffLine(value, source, sourceIndex, diffKind, inlineRanges = []) {
+  return { value, source, sourceIndex, diffKind, inlineRanges };
+}
+
+function pairedValueIndexes(previousValues, currentValues) {
+  const scores = Array.from({ length: previousValues.length + 1 }, () => Array(currentValues.length + 1).fill(0));
+  const choices = Array.from({ length: previousValues.length + 1 }, () => Array(currentValues.length + 1).fill(null));
+  for (let previousIndex = previousValues.length - 1; previousIndex >= 0; previousIndex -= 1) {
+    for (let currentIndex = currentValues.length - 1; currentIndex >= 0; currentIndex -= 1) {
+      const skipPrevious = scores[previousIndex + 1][currentIndex];
+      const skipCurrent = scores[previousIndex][currentIndex + 1];
+      const similarity = replacementTextSimilarity(previousValues[previousIndex], currentValues[currentIndex]);
+      const pair = similarity >= MIN_REPLACEMENT_PAIR_SIMILARITY
+        ? similarity + scores[previousIndex + 1][currentIndex + 1]
+        : Number.NEGATIVE_INFINITY;
+      scores[previousIndex][currentIndex] = Math.max(skipPrevious, skipCurrent, pair);
+      choices[previousIndex][currentIndex] = pair > skipPrevious && pair > skipCurrent
+        ? "pair"
+        : skipPrevious >= skipCurrent ? "previous" : "current";
+    }
+  }
+  const anchors = [];
+  let previousIndex = 0;
+  let currentIndex = 0;
+  while (previousIndex < previousValues.length && currentIndex < currentValues.length) {
+    const choice = choices[previousIndex][currentIndex];
+    if (choice === "pair") {
+      anchors.push([previousIndex, currentIndex]);
+      previousIndex += 1;
+      currentIndex += 1;
+    } else if (choice === "previous") previousIndex += 1;
+    else currentIndex += 1;
+  }
+  const pairs = [];
+  previousIndex = 0;
+  currentIndex = 0;
+  for (const [nextPrevious, nextCurrent] of [...anchors, [previousValues.length, currentValues.length]]) {
+    const previousGapLength = nextPrevious - previousIndex;
+    const currentGapLength = nextCurrent - currentIndex;
+    if (previousGapLength === currentGapLength) {
+      for (let offset = 0; offset < previousGapLength; offset += 1) {
+        pairs.push([previousIndex + offset, currentIndex + offset]);
+      }
+    }
+    if (nextPrevious < previousValues.length && nextCurrent < currentValues.length) {
+      pairs.push([nextPrevious, nextCurrent]);
+    }
+    previousIndex = nextPrevious + 1;
+    currentIndex = nextCurrent + 1;
+  }
+  return pairs;
+}
+
+function replacementTextSimilarity(previous, current) {
+  const previousTokens = comparableTokens(previous);
+  const currentTokens = comparableTokens(current);
+  if (previousTokens.length === 0 || currentTokens.length === 0) return 0;
+  const remaining = new Map();
+  for (const token of previousTokens) remaining.set(token, (remaining.get(token) ?? 0) + 1);
+  let shared = 0;
+  for (const token of currentTokens) {
+    const count = remaining.get(token) ?? 0;
+    if (count === 0) continue;
+    shared += 1;
+    remaining.set(token, count - 1);
+  }
+  return (2 * shared) / (previousTokens.length + currentTokens.length);
 }
 
 function blockHunkIndexes(block, hunks, side) {
