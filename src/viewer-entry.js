@@ -216,7 +216,11 @@ async function runAction(button) {
       break;
     }
     case "copy-code": {
-      const code = button.closest(".mdv-code")?.querySelector("pre code")?.textContent ?? "";
+      const figure = button.closest(".mdv-code");
+      const diffLines = [...(figure?.querySelectorAll(".mdv-code-line-diff .line") ?? [])];
+      const code = diffLines.length > 0
+        ? diffLines.filter((line) => line.dataset.diffKind !== "removed").map(codeLineText).join("\n")
+        : figure?.querySelector("pre code")?.textContent ?? "";
       await navigator.clipboard.writeText(code);
       showToast("コードをコピーしました");
       break;
@@ -228,6 +232,12 @@ async function runAction(button) {
       break;
     }
   }
+}
+
+function codeLineText(line) {
+  const copy = line.cloneNode(true);
+  for (const marker of copy.querySelectorAll(".mdv-code-diff-marker, .mdv-visually-hidden")) marker.remove();
+  return copy.textContent ?? "";
 }
 
 document.addEventListener("keydown", (event) => {

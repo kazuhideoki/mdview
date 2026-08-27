@@ -499,7 +499,7 @@ test("matches a replacement around an adjacent insertion by content similarity",
   }
 });
 
-test("highlights inline changes inside paired fenced code blocks", async () => {
+test("renders paired fenced code blocks as line-level changes", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-inline-code-diff-"));
   const cache = path.join(root, "cache");
   const historyRoot = path.join(root, "history");
@@ -508,26 +508,97 @@ test("highlights inline changes inside paired fenced code blocks", async () => {
   process.env.MDVIEW_CACHE_DIR = cache;
   try {
     const { renderMarkdownFile } = await import(`../src/renderer.mjs?inline-code-diff=${Date.now()}`);
-    await writeFile(markdownPath, "# Setup\n\n```bash\nnpm install\nmdview legacy-mode\n```\n");
+    await writeFile(markdownPath, "# Setup\n\n```bash\nnpm install\nmdview legacy-mode\nlegacy()\n```\n");
     await renderMarkdownFile(markdownPath, {
       historyRoot,
       meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
       catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
     });
-    await writeFile(markdownPath, "# Setup\n\n```bash\nnpm install\nmdview repository-mode\n```\n");
+    await writeFile(markdownPath, "# Setup\n\n```bash\nnpm install\nmdview repository-mode\ncurrent()\n```\n");
     const result = await renderMarkdownFile(markdownPath, {
       historyRoot,
       meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
       catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
     });
     const html = await readFile(result.outputPath, "utf8");
-    const removed = html.match(/<figure class="mdv-block mdv-code"[^>]*data-diff-kind="removed"[\s\S]*?<\/figure>/)?.[0] ?? "";
-    const added = html.match(/<figure class="mdv-block mdv-code"[^>]*data-diff-kind="added"[\s\S]*?<\/figure>/)?.[0] ?? "";
-    assert.match(removed, /mdv-inline-diff/);
-    assert.match(removed, /legacy/);
-    assert.match(added, /mdv-inline-diff/);
-    assert.match(added, /repository/);
+    const viewerCss = await readFile(new URL("../src/viewer.css", import.meta.url), "utf8");
+    const code = html.match(/<figure class="mdv-block mdv-code"[\s\S]*?<\/figure>/)?.[0] ?? "";
+    assert.match(code, /class="line" data-line-number="2" data-diff-kind="removed"/);
+    assert.match(code, /class="line" data-line-number="2" data-diff-kind="added"/);
+    assert.match(code, /mdv-inline-diff[^>]*><span[^>]*>legacy/);
+    assert.match(code, /mdv-inline-diff[^>]*><span[^>]*>repository/);
+    assert.match(code, /class="line" data-line-number="3" data-diff-kind="removed"/);
+    assert.match(code, /class="line" data-line-number="3" data-diff-kind="added"/);
+    assert.match(code, /mdv-inline-diff[^>]*><span[^>]*>current/);
+    assert.equal((code.match(/npm<\/span><span[^>]*> install/g) ?? []).length, 1);
+    assert.doesNotMatch(code, /<figure[^>]*data-diff-kind/);
+    assert.doesNotMatch(html, /<figure class="mdv-block mdv-code"[^>]*data-diff-kind="removed"/);
     assert.doesNotMatch(html, /mdv-inline-diff[^>]*>[\s\S]*?npm install[\s\S]*?<\/span>/);
+    assert.match(viewerCss, /mdv-code-diff-gutter: 24px/);
+    assert.match(viewerCss, /mdv-code-diff-marker[^}]+left: calc\(-1 \* var\(--mdv-code-diff-gutter\)\)/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("keeps unrelated same-language code blocks as separate block changes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-unrelated-code-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "code.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?unrelated-code-diff=${Date.now()}`);
+    await writeFile(markdownPath, "# Setup\n\n```bash\nlegacy-only-command\n```\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Setup\n\n```bash\ncompletely-new-operation\n```\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.equal((html.match(/<figure class="mdv-block mdv-code"/g) ?? []).length, 2);
+    assert.match(html, /<figure class="mdv-block mdv-code"[^>]*data-diff-kind="removed"/);
+    assert.match(html, /<figure class="mdv-block mdv-code"[^>]*data-diff-kind="added"/);
+    assert.doesNotMatch(html, /mdv-code-line-diff/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("falls back to block changes for an extremely asymmetric code comparison", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-asymmetric-code-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "code.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?asymmetric-code-diff=${Date.now()}`);
+    const previousLines = Array.from({ length: 501 }, (_, index) => `shared-command --item ${index}`);
+    await writeFile(markdownPath, `# Setup\n\n\`\`\`bash\n${previousLines.join("\n")}\n\`\`\`\n`);
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Setup\n\n```bash\nshared-command --item current\n```\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "inline", branch: "main", relativePath: "code.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+    assert.equal((html.match(/<figure class="mdv-block mdv-code"/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /mdv-code-line-diff/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

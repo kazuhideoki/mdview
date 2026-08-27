@@ -224,6 +224,9 @@
   .mdv-code .shiki code { counter-reset: mdview-line; }
   .mdv-code .shiki .line { position: relative; display: inline-block; min-width: 100%; min-height: 1lh; padding-left: 3em; counter-increment: mdview-line; }
   .mdv-code .shiki .line::before { content: counter(mdview-line); position: absolute; left: 0; width: 1.8em; color: #646762; text-align: right; user-select: none; }
+  .mdv-code .mdv-code-line-diff .line::before { content: attr(data-line-number); }
+  .mdv-code .mdv-code-line-diff .line[data-diff-kind="removed"] { display: none; }
+  .mdv-code-diff-marker { display: none; }
   .mdv-code.collapsed .shiki { max-height: 132px; overflow: hidden; border-bottom: 8px solid var(--mdv-surface-raised); }
   .mdv-table-wrap { position: relative; margin: 1.25em 0; overflow-x: auto; border: 1px solid var(--mdv-border); }
   .mdv-table { width: 100%; border-collapse: collapse; min-width: 680px; color: #d1cfc8; font-size: 14px; }
@@ -280,6 +283,13 @@
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind] > :first-child { position: relative; border-left: 2px solid var(--mdv-diff-color); }
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="removed"] { --mdv-diff-color: var(--mdv-removed); --mdv-diff-bg: var(--mdv-removed-bg); }
   .mdv-app[data-view="changes"] .mdv-table tr[data-diff-kind="added"] { --mdv-diff-color: var(--mdv-added); --mdv-diff-bg: var(--mdv-added-bg); }
+  .mdv-app[data-view="changes"] .mdv-code:has(.mdv-code-line-diff) { --mdv-code-diff-gutter: 24px; overflow: visible; }
+  .mdv-app[data-view="changes"] .mdv-code .mdv-code-line-diff { width: calc(100% + var(--mdv-code-diff-gutter)); margin-left: calc(-1 * var(--mdv-code-diff-gutter)); padding-left: calc(18px + var(--mdv-code-diff-gutter)); box-sizing: border-box; }
+  .mdv-app[data-view="changes"] .mdv-code .mdv-code-line-diff .line[data-diff-kind] { display: inline-block; margin-inline: -18px; padding-inline: calc(18px + 3em) 18px; min-width: calc(100% + 36px); border-left: 2px solid var(--mdv-diff-color); background: var(--mdv-diff-bg); --mdv-inline-diff-bg: var(--mdv-added-inline-bg); }
+  .mdv-app[data-view="changes"] .mdv-code .mdv-code-line-diff .line[data-diff-kind]::before { left: 18px; }
+  .mdv-app[data-view="changes"] .mdv-code .mdv-code-line-diff .line[data-diff-kind="removed"] { --mdv-diff-color: var(--mdv-removed); --mdv-diff-bg: var(--mdv-removed-bg); --mdv-inline-diff-bg: var(--mdv-removed-inline-bg); }
+  .mdv-app[data-view="changes"] .mdv-code .mdv-code-line-diff .line[data-diff-kind="added"] { --mdv-diff-color: var(--mdv-added); --mdv-diff-bg: var(--mdv-added-bg); }
+  .mdv-app[data-view="changes"] .mdv-code-diff-marker { position: absolute; display: inline-block; left: calc(-1 * var(--mdv-code-diff-gutter)); width: var(--mdv-code-diff-gutter); color: var(--mdv-diff-color); text-align: center; font: 750 .9em/1.68 var(--mdv-font-mono); }
   .mdv-app[data-view="changes"] .mdv-heading[data-diff-kind]::after { display: none; }
   .mdv-app.toc-hidden { grid-template-columns: 0 minmax(0, 1fr); }
   .mdv-app.toc-hidden .mdv-sidebar { transform: translateX(-100%); visibility: hidden; }
