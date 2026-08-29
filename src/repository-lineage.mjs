@@ -47,9 +47,13 @@ export async function discoverMergeSources(input, options = {}) {
         candidateMeta: through.meta,
       }, options);
       if (options.requireMergedParentEvidence && ancestryEvidence === "newly-reachable") continue;
+      const candidateFiles = typeof options.resolveCandidateFiles === "function"
+        ? await options.resolveCandidateFiles(through)
+        : through.files;
+      if (!candidateFiles) continue;
       const snapshotMatch = ancestryEvidence && typeof options.verifyCandidateSnapshot === "function"
-        ? await options.verifyCandidateSnapshot(through)
-        : matchesSnapshot(previous?.files || null, input.currentFiles, through.files);
+        ? await options.verifyCandidateSnapshot(through, candidateFiles)
+        : matchesSnapshot(previous?.files || null, input.currentFiles, candidateFiles);
       if (!snapshotMatch || (!ancestryEvidence && !destinationChanged)) continue;
       if (!ancestryEvidence && previous && Date.parse(through.renderedAt) < Date.parse(previous.renderedAt)) continue;
 
@@ -61,7 +65,7 @@ export async function discoverMergeSources(input, options = {}) {
         sourceBranch: through.meta?.branch || null,
         sourceHead: through.meta?.head || through.meta?.commit?.slice(0, 7) || null,
         renderedAt: through.renderedAt,
-        files: through.files,
+        files: candidateFiles,
         ancestryEvidence,
       });
       break;

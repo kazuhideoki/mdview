@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   access,
   mkdir,
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   cleanupHookStates,
   hookStateKey,
@@ -21,6 +23,8 @@ import {
 } from "../src/hook-event.mjs";
 import { readHistorySnapshot } from "../src/history.mjs";
 import { readWorkspaceHistoryForRoot } from "../src/workspace-history.mjs";
+
+const run = promisify(execFile);
 
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mdview-hook-event-"));
@@ -231,6 +235,27 @@ test("scanner ignores dependency and build directories outside git", async (t) =
   }
   const snapshot = await scanMarkdownFiles(cwd);
   assert.deepEqual(Object.keys(snapshot.files), ["visible.MD"]);
+});
+
+test("git scanner follows only relative in-repository symlink paths", async (t) => {
+  const { directory, cwd } = await fixture(t);
+  const shared = path.join(cwd, "shared");
+  const contents = "# Shared instructions\n";
+  await mkdir(shared);
+  await writeFile(path.join(shared, "INSTRUCTIONS.md"), contents);
+  await writeFile(path.join(directory, "outside.md"), "# Outside\n");
+  await symlink("shared", path.join(cwd, "alias-dir"));
+  await symlink("alias-dir/INSTRUCTIONS.md", path.join(cwd, "document.md"));
+  await symlink(path.join(shared, "INSTRUCTIONS.md"), path.join(cwd, "absolute.md"));
+  await symlink("../outside.md", path.join(cwd, "outside.md"));
+  await symlink("loop-b.md", path.join(cwd, "loop-a.md"));
+  await symlink("loop-a.md", path.join(cwd, "loop-b.md"));
+  await run("git", ["init", "-b", "main"], { cwd });
+  await run("git", ["add", "--", "alias-dir", "document.md", "absolute.md", "outside.md", "loop-a.md", "loop-b.md", "shared/INSTRUCTIONS.md"], { cwd });
+
+  const snapshot = await scanMarkdownFiles(cwd);
+  assert.deepEqual(Object.keys(snapshot.files), ["document.md", "shared/INSTRUCTIONS.md"]);
+  assert.equal(snapshot.files["document.md"], snapshot.files["shared/INSTRUCTIONS.md"]);
 });
 
 test("TTL cleanup removes only stale JSON states", async (t) => {

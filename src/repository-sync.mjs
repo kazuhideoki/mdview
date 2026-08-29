@@ -40,7 +40,11 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
 
   const previousCommit = previous?.meta?.commit || null;
   const sameCommit = previousCommit === gitContext.commit;
-  if (previous && sameCommit && gitContext.parents.length <= 1) {
+  let previousCommittedSnapshot = null;
+  if (previous?.source === "repository-sync" && previousCommit && previous.meta?.markdownSnapshot !== "resolved-v1") {
+    previousCommittedSnapshot = await committedMarkdownSnapshot(absoluteRoot, previousCommit, options);
+  }
+  if (previous && sameCommit && gitContext.parents.length <= 1 && !previousCommittedSnapshot) {
     return { action: "unchanged", manifest: workspace, revision: previous, added: false };
   }
 
@@ -57,13 +61,18 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
     commit: gitContext.commit,
     parents: gitContext.parents,
     mergeBoundaries,
+    markdownSnapshot: "resolved-v1",
   };
   const renderedAt = new Date(options.now ?? Date.now()).toISOString();
   const committedFiles = new Map();
-  let comparisonFiles = previous?.files || {};
+  let comparisonFiles = previousCommittedSnapshot?.files || previous?.files || {};
   let files;
   if (previous && sameCommit) {
-    files = previous.files;
+    files = previousCommittedSnapshot?.files || previous.files;
+    if (previousCommittedSnapshot) {
+      committedFiles.set(gitContext.commit, files);
+      await storeCommittedMarkdownSnapshot(previousCommittedSnapshot, stored);
+    }
   } else {
     const snapshot = await committedMarkdownSnapshot(absoluteRoot, gitContext.commit, options);
     files = snapshot.files;
@@ -91,7 +100,21 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
       ...options,
       ...stored,
       requireMergedParentEvidence: previousCommit === null,
-      verifyCandidateSnapshot: async (revision) => {
+      resolveCandidateFiles: async (revision) => {
+        const commit = revision.meta?.commit;
+        if (revision.source !== "repository-sync" || revision.meta?.markdownSnapshot === "resolved-v1" || !commit) {
+          return revision.files;
+        }
+        if (!committedFiles.has(commit)) {
+          try {
+            committedFiles.set(commit, (await committedMarkdownSnapshot(absoluteRoot, commit, options)).files);
+          } catch {
+            return null;
+          }
+        }
+        return committedFiles.get(commit);
+      },
+      verifyCandidateSnapshot: async (revision, candidateFiles) => {
         const commit = revision.meta?.commit;
         if (!commit) return false;
         if (!committedFiles.has(commit)) {
@@ -101,12 +124,12 @@ export async function reconcileWorkspaceRoot(root, options = {}) {
             return false;
           }
         }
-        return workspaceFilesEqual(committedFiles.get(commit), revision.files);
+        return workspaceFilesEqual(committedFiles.get(commit), candidateFiles);
       },
     })
     : [];
 
-  if (filesEqual && mergeSources.length === 0) {
+  if (filesEqual && mergeSources.length === 0 && !previousCommittedSnapshot) {
     return { action: "unchanged", manifest: workspace, revision: previous, added: false };
   }
 
@@ -146,21 +169,82 @@ export async function primaryWorktreeRoot(root, options = {}) {
 }
 
 async function committedMarkdownSnapshot(root, commit, options) {
-  const output = await gitText(root, ["ls-tree", "-r", "-z", "--name-only", commit], options);
+  const output = await gitText(root, ["ls-tree", "-r", "-z", commit], options);
   if (output === null) throw new Error(`Unable to read committed files for ${root}.`);
-  const relativePaths = output
+  const entries = new Map(output
     .split("\0")
+    .filter(Boolean)
+    .map(parseTreeEntry)
+    .map((entry) => [entry.relativePath, entry]));
+  const relativePaths = [...entries.keys()]
     .filter((relativePath) => /[.](?:md|markdown)$/i.test(relativePath))
     .sort((left, right) => left.localeCompare(right));
   const files = {};
   const contents = {};
   for (const relativePath of relativePaths) {
-    const markdown = await gitText(root, ["cat-file", "blob", `${commit}:${relativePath}`], options);
-    if (markdown === null) throw new Error(`Unable to read committed Markdown: ${relativePath}`);
+    const markdown = await committedFileContents(root, commit, relativePath, entries, options);
+    if (markdown === null) continue;
     contents[relativePath] = markdown;
     files[relativePath] = createHash("sha256").update(markdown).digest("hex");
   }
   return { files, contents };
+}
+
+function parseTreeEntry(record) {
+  const separator = record.indexOf("\t");
+  const metadata = separator === -1 ? "" : record.slice(0, separator);
+  const relativePath = separator === -1 ? "" : record.slice(separator + 1);
+  const [mode, type, object] = metadata.split(" ");
+  if (!mode || !type || !object || !relativePath) {
+    throw new Error("Unable to parse committed Git tree.");
+  }
+  return { mode, type, object, relativePath };
+}
+
+async function committedFileContents(root, commit, relativePath, entries, options, resolving = new Set()) {
+  const normalizedPath = path.posix.normalize(relativePath);
+  if (normalizedPath === ".." || normalizedPath.startsWith("../") || path.posix.isAbsolute(normalizedPath)) return null;
+  const entry = entries.get(normalizedPath);
+  if (!entry) {
+    const components = normalizedPath.split("/");
+    for (let index = components.length - 1; index > 0; index -= 1) {
+      const prefix = components.slice(0, index).join("/");
+      const prefixEntry = entries.get(prefix);
+      if (prefixEntry?.mode !== "120000" || prefixEntry.type !== "blob") continue;
+      const suffix = components.slice(index).join("/");
+      const target = await committedSymlinkTarget(root, commit, prefix, options);
+      if (target === null || resolving.has(prefix)) return null;
+      return committedFileContents(
+        root,
+        commit,
+        path.posix.join(target, suffix),
+        entries,
+        options,
+        new Set([...resolving, prefix]),
+      );
+    }
+    return null;
+  }
+  if (entry.type !== "blob" || resolving.has(normalizedPath)) return null;
+  const contents = await gitText(root, ["cat-file", "blob", `${commit}:${normalizedPath}`], options);
+  if (contents === null) throw new Error(`Unable to read committed file: ${normalizedPath}`);
+  if (entry.mode !== "120000") return contents;
+  const target = committedRelativeTarget(normalizedPath, contents);
+  if (target === null) return null;
+  return committedFileContents(root, commit, target, entries, options, new Set([...resolving, normalizedPath]));
+}
+
+async function committedSymlinkTarget(root, commit, relativePath, options) {
+  const contents = await gitText(root, ["cat-file", "blob", `${commit}:${relativePath}`], options);
+  if (contents === null) throw new Error(`Unable to read committed symlink: ${relativePath}`);
+  return committedRelativeTarget(relativePath, contents);
+}
+
+function committedRelativeTarget(relativePath, contents) {
+  if (path.posix.isAbsolute(contents) || contents.includes("\0")) return null;
+  const target = path.posix.normalize(path.posix.join(path.posix.dirname(relativePath), contents));
+  if (target === ".." || target.startsWith("../")) return null;
+  return target;
 }
 
 async function storeCommittedMarkdownSnapshot(snapshot, options) {
