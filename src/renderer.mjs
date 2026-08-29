@@ -29,6 +29,7 @@ import { discoverMergeSources } from "./repository-lineage.mjs";
 import { pageTemplate } from "./template.mjs";
 import { branchDisplay, resolveCodexSessionTitle } from "./codex-context.mjs";
 import {
+  readerWorkspaceChanges,
   readWorkspaceHistory,
   readWorkspaceHistoryForRoot,
   registerWorkspaceRevision,
@@ -241,7 +242,8 @@ export async function renderHistoryRevision(documentId, revisionId, options = {}
 export async function renderWorkspaceRevision(workspaceId, workspaceRevisionId, documentId, options = {}) {
   const historyOptions = options.historyRoot ? { root: options.historyRoot } : {};
   const workspace = await readWorkspaceHistory(workspaceId, historyOptions);
-  const file = workspaceFileAtRevision(workspace, workspaceRevisionId, documentId);
+  const changes = readerWorkspaceChanges(workspace, workspaceRevisionId);
+  const file = workspaceFileAtRevision(workspace, workspaceRevisionId, documentId, { changes });
   if (!file) return null;
   const { revision, relativePath, change } = file;
   const deleted = change?.kind === "deleted";

@@ -16,6 +16,8 @@ import { readWorkspaceLineage } from "./repository-lineage.mjs";
 import { reconcileWorkspaceHistory } from "./repository-sync.mjs";
 import { resolveCodexSessionTitle } from "./codex-context.mjs";
 import {
+  isReaderWorkspaceRevision,
+  readerWorkspaceChanges,
   readWorkspaceHistories,
   readWorkspaceHistory,
   workspaceDocumentId,
@@ -530,11 +532,14 @@ async function workspaceDetails(request, response, requestUrl, workspaceId, opti
   if (!currentNode) return respond(response, 404, "Not Found");
   const resolveSessionTitle = options.resolveSessionTitle || resolveCodexSessionTitle;
   const sessionTitle = revision.sessionId ? await resolveSessionTitle(revision.sessionId) : null;
-  const currentFile = currentDocumentId ? workspaceFileAtRevision(workspace, revision.id, currentDocumentId) : null;
+  const readerChanges = readerWorkspaceChanges(workspace, revision.id);
+  const currentFile = currentDocumentId
+    ? workspaceFileAtRevision(workspace, revision.id, currentDocumentId, { changes: readerChanges })
+    : null;
   const preferredRelativePath = currentFile?.relativePath || null;
   const expandedLineage = lineage.nodes.some((candidate) => candidate.imported);
   const preserveLineage = requestedLineageId !== null ? lineageWorkspaceId : null;
-  const files = projectWorkspaceFiles(workspace, revision, preserveLineage);
+  const files = projectWorkspaceFiles(workspace, revision, preserveLineage, readerChanges);
   const revisions = lineage.nodes
     .filter((candidate) => isReaderHistoryNode(candidate, currentNode))
     .map((candidate) => ({
@@ -571,17 +576,11 @@ function isReaderHistoryNode(candidate, currentNode) {
   if (candidate.workspaceId === currentNode.workspaceId && candidate.revision.id === currentNode.revision.id) {
     return true;
   }
-  return isReaderRevision(candidate.revision);
-}
-
-function isReaderRevision(revision) {
-  if (revision.source === "repository-sync") return revision.mergeSources.length > 0;
-  if (revision.source === "hook") return revision.changes.length > 0 || revision.mergeSources.length > 0;
-  return true;
+  return isReaderWorkspaceRevision(candidate.revision);
 }
 
 function latestReaderRevision(workspace) {
-  return [...workspace.revisions].reverse().find(isReaderRevision) || workspace.revisions.at(-1);
+  return [...workspace.revisions].reverse().find(isReaderWorkspaceRevision) || workspace.revisions.at(-1);
 }
 
 async function reconcileWorkspaceOnce(workspaceId, reconcileWorkspace) {
@@ -609,20 +608,20 @@ function projectWorkspaceSummary(workspace) {
   };
 }
 
-function projectWorkspaceFiles(workspace, revision, lineageWorkspaceId = null) {
+function projectWorkspaceFiles(workspace, revision, lineageWorkspaceId = null, changes = revision.changes) {
   const paths = new Set(Object.keys(revision.files));
-  for (const change of revision.changes) {
+  for (const change of changes) {
     if (change.kind === "deleted") paths.add(change.path);
   }
   return [...paths].map((relativePath) => {
     const documentId = workspaceDocumentId(workspace.root, relativePath);
-    const change = revision.changes.find((candidate) => candidate.path === relativePath) || null;
+    const change = changes.find((candidate) => candidate.path === relativePath) || null;
     return {
       documentId,
       title: path.basename(relativePath).replace(/\.(?:md|markdown)$/i, ""),
       relativePath,
       changeKind: change?.kind || null,
-      updatedAt: workspaceFileUpdatedAt(workspace, revision, relativePath),
+      updatedAt: change ? revision.renderedAt : workspaceFileUpdatedAt(workspace, revision, relativePath),
       href: appendLineage(workspaceDocumentHref(workspace.workspaceId, revision.id, documentId), lineageWorkspaceId),
     };
   }).sort((left, right) => (
