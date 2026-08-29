@@ -246,6 +246,7 @@ function normalizeMeta(value, root) {
   if (Array.isArray(meta.parents)) {
     normalized.parents = meta.parents.filter((parent) => typeof parent === "string" && /^[a-f0-9]{40}$/i.test(parent));
   }
+  if (meta.markdownSnapshot === "resolved-v1") normalized.markdownSnapshot = meta.markdownSnapshot;
   return normalized;
 }
 

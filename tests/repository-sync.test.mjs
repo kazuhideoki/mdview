@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,6 +14,112 @@ import { readWorkspaceHistoryForRoot, registerWorkspaceRevision } from "../src/w
 
 const run = promisify(execFile);
 const digest = (contents) => createHash("sha256").update(contents).digest("hex");
+
+test("repository sync dereferences tracked Markdown symlinks like live workspace scans", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-symlink-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const historyRoot = path.join(directory, "history");
+  const mainRoot = path.join(directory, "repo");
+  await mkdir(mainRoot);
+  await git(mainRoot, ["init", "-b", "main"]);
+  await git(mainRoot, ["config", "user.name", "mdview test"]);
+  await git(mainRoot, ["config", "user.email", "mdview@example.test"]);
+
+  const readme = "# Repository\n";
+  await writeFile(path.join(mainRoot, "README.md"), readme);
+  await git(mainRoot, ["add", "README.md"]);
+  await git(mainRoot, ["commit", "-m", "base"]);
+  const baseContext = await resolveGitRepositoryContext(mainRoot);
+  await storeHistorySnapshot(readme, { root: historyRoot });
+  await registerWorkspaceRevision({
+    root: mainRoot,
+    renderedAt: "2026-08-28T12:00:00.000Z",
+    source: "hook",
+    sessionId: "base-session",
+    turnId: "base-turn",
+    meta: gitMeta(mainRoot, "main", baseContext),
+    files: { "README.md": digest(readme) },
+    changes: [],
+  }, { root: historyRoot });
+
+  const instructions = "# Development\n\nShared instructions.\n";
+  await mkdir(path.join(mainRoot, "stow-shared"));
+  await mkdir(path.join(mainRoot, "stow", "claude", ".claude"), { recursive: true });
+  await mkdir(path.join(mainRoot, "stow", "codex", ".codex"), { recursive: true });
+  await writeFile(path.join(mainRoot, "stow-shared", "INSTRUCTIONS.md"), instructions);
+  await symlink("stow-shared", path.join(mainRoot, "shared-alias"));
+  await symlink("../../../stow-shared/INSTRUCTIONS.md", path.join(mainRoot, "stow", "claude", ".claude", "CLAUDE.md"));
+  await symlink("../../../shared-alias/INSTRUCTIONS.md", path.join(mainRoot, "stow", "codex", ".codex", "AGENTS.md"));
+  await git(mainRoot, ["add", "shared-alias", "stow-shared/INSTRUCTIONS.md", "stow/claude/.claude/CLAUDE.md", "stow/codex/.codex/AGENTS.md"]);
+  await git(mainRoot, ["commit", "-m", "add shared instructions"]);
+
+  const reconciled = await reconcileWorkspaceRoot(mainRoot, {
+    historyRoot,
+    now: Date.parse("2026-08-28T13:00:00.000Z"),
+  });
+  assert.equal(reconciled.action, "reconciled");
+  assert.equal(reconciled.revision.files["stow-shared/INSTRUCTIONS.md"], digest(instructions));
+  assert.equal(reconciled.revision.files["stow/claude/.claude/CLAUDE.md"], digest(instructions));
+  assert.equal(reconciled.revision.files["stow/codex/.codex/AGENTS.md"], digest(instructions));
+  assert.equal(await readHistorySnapshot(digest(instructions), { root: historyRoot }), instructions);
+});
+
+test("repository sync migrates stored symlink payloads without reporting a document change", async (t) => {
+  const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-symlink-migration-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const historyRoot = path.join(directory, "history");
+  const mainRoot = path.join(directory, "repo");
+  await mkdir(mainRoot);
+  await git(mainRoot, ["init", "-b", "main"]);
+  await git(mainRoot, ["config", "user.name", "mdview test"]);
+  await git(mainRoot, ["config", "user.email", "mdview@example.test"]);
+
+  const before = "# Before\n";
+  const after = "# After\n";
+  const instructions = "# Shared\n";
+  const linkTarget = "../shared/INSTRUCTIONS.md";
+  await mkdir(path.join(mainRoot, "config"));
+  await mkdir(path.join(mainRoot, "shared"));
+  await writeFile(path.join(mainRoot, "README.md"), before);
+  await writeFile(path.join(mainRoot, "shared", "INSTRUCTIONS.md"), instructions);
+  await symlink(linkTarget, path.join(mainRoot, "config", "AGENTS.md"));
+  await git(mainRoot, ["add", "README.md", "shared/INSTRUCTIONS.md", "config/AGENTS.md"]);
+  await git(mainRoot, ["commit", "-m", "base"]);
+  const baseContext = await resolveGitRepositoryContext(mainRoot);
+  for (const contents of [before, instructions, linkTarget]) {
+    await storeHistorySnapshot(contents, { root: historyRoot });
+  }
+  await registerWorkspaceRevision({
+    root: mainRoot,
+    renderedAt: "2026-08-28T12:00:00.000Z",
+    source: "repository-sync",
+    sessionId: null,
+    turnId: null,
+    meta: gitMeta(mainRoot, "main", baseContext),
+    files: {
+      "README.md": digest(before),
+      "config/AGENTS.md": digest(linkTarget),
+      "shared/INSTRUCTIONS.md": digest(instructions),
+    },
+    changes: [],
+  }, { root: historyRoot });
+
+  await writeFile(path.join(mainRoot, "README.md"), after);
+  await git(mainRoot, ["add", "README.md"]);
+  await git(mainRoot, ["commit", "-m", "edit readme"]);
+  const reconciled = await reconcileWorkspaceRoot(mainRoot, {
+    historyRoot,
+    now: Date.parse("2026-08-28T13:00:00.000Z"),
+  });
+
+  assert.deepEqual(reconciled.revision.changes, [{
+    path: "README.md",
+    kind: "modified",
+    beforeContentHash: digest(before),
+    contentHash: digest(after),
+  }]);
+  assert.equal(reconciled.revision.files["config/AGENTS.md"], digest(instructions));
+});
 
 test("repository sync appends merged worktree lineage to the primary workspace", async (t) => {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-sync-")));
@@ -245,7 +351,7 @@ test("repository sync preserves a complete commitless hook snapshot as its basel
   }]);
 });
 
-test("repository sync skips lineage discovery when a non-merge HEAD is already recorded", async (t) => {
+test("repository sync marks a legacy snapshot without lineage discovery when a non-merge HEAD is already recorded", async (t) => {
   const directory = await realpath(await mkdtemp(path.join(os.tmpdir(), "mdview-repository-same-head-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const historyRoot = path.join(directory, "history");
@@ -281,6 +387,10 @@ test("repository sync skips lineage discovery when a non-merge HEAD is already r
     if (args[0] === "rev-parse" && args[1] === "--git-common-dir") return { stdout: `${commonDir}\n` };
     if (args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: `${currentCommit}\n` };
     if (args[0] === "rev-list" && args[1] === "--parents") return { stdout: `${currentCommit} ${parentCommit}\n` };
+    if (args[0] === "ls-tree" && args.at(-1) === currentCommit) {
+      return { stdout: `100644 blob ${"e".repeat(40)}\tREADME.md\0` };
+    }
+    if (args[0] === "cat-file" && args.at(-1) === `${currentCommit}:README.md`) return { stdout: contents };
     throw new Error(`Unexpected Git call: ${args.join(" ")}`);
   };
 
@@ -290,10 +400,12 @@ test("repository sync skips lineage discovery when a non-merge HEAD is already r
     execFile,
   });
 
-  assert.equal(reconciled.action, "unchanged");
-  assert.equal(reconciled.revision.id, recorded.revision.id);
+  assert.equal(reconciled.action, "reconciled");
+  assert.notEqual(reconciled.revision.id, recorded.revision.id);
+  assert.equal(reconciled.revision.meta.markdownSnapshot, "resolved-v1");
+  assert.deepEqual(reconciled.revision.changes, []);
   assert.equal(gitCalls.filter((args) => args[0] === "rev-parse" && args[1] === "--git-common-dir").length, 1);
-  assert.equal(gitCalls.filter((args) => args[0] === "branch").length, 0);
+  assert.equal(gitCalls.filter((args) => args[0] === "branch").length, 1);
   assert.equal(gitCalls.filter((args) => args[0] === "merge-base").length, 0);
   assert.equal(gitCalls.filter((args) => args[0] === "rev-list" && args[1] === "--first-parent").length, 0);
 });
@@ -377,8 +489,10 @@ test("repository sync can attach a source history that appears after the primary
     if (args[0] === "rev-parse" && args[1] === "HEAD") return { stdout: `${mergeCommit}\n` };
     if (args[0] === "rev-list") return { stdout: `${mergeCommit} ${firstParent} ${mergedCommit}\n` };
     if (args[0] === "branch") return { stdout: "main\n" };
-    if (args[0] === "ls-tree" && args.at(-1) === mergedCommit) return { stdout: "README.md\0" };
-    if (args[0] === "cat-file" && args.at(-1) === `${mergedCommit}:README.md`) return { stdout: contents };
+    if (args[0] === "ls-tree" && [mergeCommit, mergedCommit].includes(args.at(-1))) {
+      return { stdout: `100644 blob ${"e".repeat(40)}\tREADME.md\0` };
+    }
+    if (args[0] === "cat-file" && [`${mergeCommit}:README.md`, `${mergedCommit}:README.md`].includes(args.at(-1))) return { stdout: contents };
     if (args[0] === "merge-base" && args.at(-2) === mergedCommit && args.at(-1) === mergedCommit) return { stdout: "" };
     throw new Error("not an ancestor");
   };
@@ -393,7 +507,7 @@ test("repository sync can attach a source history that appears after the primary
   assert.deepEqual(reconciled.revision.changes, []);
   assert.equal(reconciled.revision.mergeSources[0].workspaceId, feature.manifest.workspaceId);
   assert.equal(reconciled.revision.mergeSources[0].throughRevisionId, feature.revision.id);
-  assert.ok(!gitCalls.some((args) => args[0] === "ls-tree" && args.at(-1) === mergeCommit));
+  assert.equal(gitCalls.filter((args) => args[0] === "ls-tree" && args.at(-1) === mergeCommit).length, 1);
   assert.equal(gitCalls.filter((args) => args[0] === "rev-parse" && args[1] === "--git-common-dir").length, 1);
   assert.equal(gitCalls.filter((args) => args[0] === "merge-base").length, 0);
   assert.equal(gitCalls.filter((args) => args[0] === "rev-list" && args[1] === "--first-parent").length, 0);

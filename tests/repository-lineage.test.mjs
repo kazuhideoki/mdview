@@ -98,6 +98,38 @@ test("snapshot provenance links a recent worktree when its Markdown delta appear
   }]);
 });
 
+test("snapshot provenance compares a legacy candidate through its resolved projection", async (t) => {
+  const historyRoot = await mkdtemp(path.join(os.tmpdir(), "mdview-lineage-projected-candidate-"));
+  t.after(() => rm(historyRoot, { recursive: true, force: true }));
+  const mainRoot = path.join(historyRoot, "main");
+  const featureRoot = path.join(historyRoot, "feature");
+  const options = { root: historyRoot };
+  const main = await revision(mainRoot, "2026-08-16T09:00:00.000Z", "main-session", "turn-1", hash("a"), [], options);
+  const feature = await revision(featureRoot, "2026-08-16T10:00:00.000Z", "feature-session", "turn-1", hash("d"), [], options);
+
+  const sources = await discoverMergeSources({
+    destination: main.manifest,
+    destinationRoot: mainRoot,
+    currentFiles: { "README.md": hash("b") },
+    currentMeta: { repositoryId, commit: "c".repeat(40), parents: [] },
+    renderedAt: "2026-08-16T11:00:00.000Z",
+  }, {
+    ...options,
+    histories: [main.manifest, feature.manifest],
+    resolveCandidateFiles: async (candidate) => (
+      candidate.id === feature.revision.id ? { "README.md": hash("b") } : candidate.files
+    ),
+    execFile: async () => {
+      const error = new Error("not an ancestor");
+      error.code = 1;
+      throw error;
+    },
+  });
+
+  assert.equal(sources[0].throughRevisionId, feature.revision.id);
+  assert.equal(sources[0].reason, "snapshot-match");
+});
+
 test("Git ancestry never imports a candidate whose Markdown snapshot is absent from the destination", async (t) => {
   const historyRoot = await mkdtemp(path.join(os.tmpdir(), "mdview-lineage-ancestry-"));
   t.after(() => rm(historyRoot, { recursive: true, force: true }));

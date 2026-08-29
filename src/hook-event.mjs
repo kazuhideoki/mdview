@@ -7,6 +7,7 @@ import {
   open,
   readdir,
   readFile,
+  readlink,
   rename,
   stat,
   unlink,
@@ -64,16 +65,6 @@ function isMarkdownFile(filePath) {
 
 function portableRelative(filePath) {
   return filePath.split(path.sep).join("/");
-}
-
-async function fileExists(filePath) {
-  try {
-    const info = await stat(filePath);
-    return info.isFile();
-  } catch (error) {
-    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") return false;
-    throw error;
-  }
 }
 
 async function hashFile(filePath) {
@@ -172,8 +163,8 @@ export async function scanMarkdownFiles(cwd) {
   const candidates = (await gitMarkdownPaths(root)) || (await walkMarkdownPaths(root));
   const files = {};
   for (const relativePath of candidates) {
-    const absolutePath = path.join(root, ...relativePath.split("/"));
-    if (!(await fileExists(absolutePath))) continue;
+    const absolutePath = await resolveRelativeWorkspaceFile(root, relativePath);
+    if (!absolutePath) continue;
     try {
       files[relativePath] = await hashFile(absolutePath);
     } catch (error) {
@@ -182,6 +173,46 @@ export async function scanMarkdownFiles(cwd) {
     }
   }
   return { root, files };
+}
+
+async function resolveRelativeWorkspaceFile(root, relativePath) {
+  let pending = relativePath.split("/");
+  let resolved = [];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const component = pending.shift();
+    if (!component || component === ".") continue;
+    if (component === "..") return null;
+    const currentRelative = path.join(...resolved, component);
+    const currentPath = path.join(root, currentRelative);
+    let info;
+    try {
+      info = await lstat(currentPath);
+    } catch (error) {
+      if (["ELOOP", "ENOENT", "ENOTDIR"].includes(error?.code)) return null;
+      throw error;
+    }
+    if (!info.isSymbolicLink()) {
+      resolved.push(component);
+      continue;
+    }
+    const target = await readlink(currentPath);
+    if (path.isAbsolute(target)) return null;
+    const normalizedTarget = path.normalize(path.join(path.dirname(currentRelative), target));
+    if (normalizedTarget === ".." || normalizedTarget.startsWith(`..${path.sep}`)) return null;
+    const state = `${currentRelative}\0${normalizedTarget}\0${pending.join(path.sep)}`;
+    if (visited.has(state)) return null;
+    visited.add(state);
+    pending = [...normalizedTarget.split(path.sep), ...pending];
+    resolved = [];
+  }
+  const absolutePath = path.join(root, ...resolved);
+  try {
+    return (await stat(absolutePath)).isFile() ? absolutePath : null;
+  } catch (error) {
+    if (["ELOOP", "ENOENT", "ENOTDIR"].includes(error?.code)) return null;
+    throw error;
+  }
 }
 
 export function hookStateKey(payload) {
