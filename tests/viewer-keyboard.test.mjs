@@ -20,3 +20,24 @@ test("command palettes support Control-N and Control-P selection", async () => {
   assert.equal(source.match(/paletteSelectionDirection\(event\)/g)?.length, 4,
     "workspace, outline, and document search palettes should share the helper");
 });
+
+test("outline palette previews selection and only keeps the position on confirmation", async () => {
+  const source = await readFile(new URL("../src/viewer-entry.js", import.meta.url), "utf8");
+
+  assert.match(source, /function setActiveOutlineResult\(index, scroll = true, preview = true\)/,
+    "outline selection should opt into live document previews");
+  assert.match(source, /if \(preview\) previewSelectedOutlineResult\(\)/,
+    "moving the outline selection should preview its heading");
+  assert.match(source, /withInstantScroll\(\(\) => heading\.scrollIntoView\(\{ block: "start" \}\)\)/,
+    "live previews should track immediately instead of queueing smooth scrolls");
+  assert.match(source, /outlinePaletteInput\.focus\(\{ preventScroll: true \}\)/,
+    "opening the palette should not move the document before selection moves");
+  assert.match(source, /const restorePosition = outlinePaletteState\.restoreScrollPosition;\s+if \(restorePosition\) scrollViewportInstantly/,
+    "the opening frame should preserve the document position while the overlay takes focus");
+  assert.match(source, /document\.body\.classList\.add\("mdv-outline-preview-open"\)/,
+    "the outline palette should leave the document scrollable for live previews");
+  assert.match(source, /closeOutlinePalette\(\{ restoreFocus: false, restoreScroll: false \}\)/,
+    "confirming a heading should keep the previewed position");
+  assert.match(source, /if \(restorePosition\) scrollViewportInstantly\(restorePosition\)/,
+    "cancelling the palette should restore its opening position");
+});
