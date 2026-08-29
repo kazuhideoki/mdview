@@ -111,11 +111,12 @@ export async function registerWorkspaceRevision(input, options = {}) {
   });
 }
 
-export function workspaceFileAtRevision(manifest, revisionId, documentId) {
+export function workspaceFileAtRevision(manifest, revisionId, documentId, options = {}) {
   validateId(revisionId);
   validateId(documentId);
   const revision = manifest?.revisions?.find((candidate) => candidate.id === revisionId);
   if (!revision || !manifest.root) return null;
+  const changes = options.changes ?? revision.changes;
   for (const [relativePath, contentHash] of Object.entries(revision.files)) {
     if (workspaceDocumentId(manifest.root, relativePath) !== documentId) continue;
     return {
@@ -124,10 +125,10 @@ export function workspaceFileAtRevision(manifest, revisionId, documentId) {
       revision,
       relativePath,
       contentHash,
-      change: revision.changes.find((candidate) => candidate.path === relativePath) || null,
+      change: changes.find((candidate) => candidate.path === relativePath) || null,
     };
   }
-  for (const change of revision.changes) {
+  for (const change of changes) {
     if (change.kind !== "deleted" || workspaceDocumentId(manifest.root, change.path) !== documentId) continue;
     return {
       workspaceId: manifest.workspaceId,
@@ -139,6 +140,42 @@ export function workspaceFileAtRevision(manifest, revisionId, documentId) {
     };
   }
   return null;
+}
+
+export function isReaderWorkspaceRevision(revision) {
+  if (revision.source === "repository-sync") return revision.mergeSources.length > 0;
+  if (revision.source === "hook") return revision.changes.length > 0 || revision.mergeSources.length > 0;
+  return true;
+}
+
+export function readerWorkspaceChanges(manifest, revisionId) {
+  validateId(revisionId);
+  const revisionIndex = manifest?.revisions?.findIndex((candidate) => candidate.id === revisionId) ?? -1;
+  if (revisionIndex < 0) return [];
+  const revision = manifest.revisions[revisionIndex];
+  const previous = manifest.revisions
+    .slice(0, revisionIndex)
+    .reverse()
+    .find(isReaderWorkspaceRevision);
+  if (!previous) return revision.changes;
+  return workspaceChanges(previous.files, revision.files);
+}
+
+function workspaceChanges(previous, current) {
+  const paths = new Set([...Object.keys(previous), ...Object.keys(current)]);
+  return [...paths]
+    .filter((relativePath) => previous[relativePath] !== current[relativePath])
+    .map((relativePath) => {
+      const beforeContentHash = previous[relativePath] ?? null;
+      const contentHash = current[relativePath] ?? null;
+      return {
+        path: relativePath,
+        kind: beforeContentHash === null ? "added" : contentHash === null ? "deleted" : "modified",
+        beforeContentHash,
+        contentHash,
+      };
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function normalizeRevisionInput(input) {

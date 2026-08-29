@@ -4,7 +4,14 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { historyRevisionId, registerHistoryRevision, storeHistoryCacheArtifacts, storeHistoryRenderedHtml } from "../src/history.mjs";
+import {
+  historyRevisionId,
+  markdownContentHash,
+  registerHistoryRevision,
+  storeHistoryCacheArtifacts,
+  storeHistoryRenderedHtml,
+  storeHistorySnapshot,
+} from "../src/history.mjs";
 
 test("loopback server serves cache files and limits file opening to trusted requests", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-"));
@@ -548,6 +555,77 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     const recoveredManifest = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}`);
     assert.equal(recoveredManifest.status, 200);
     assert.match(await recoveredManifest.text(), /<span class="mdv-inline-diff">After<\/span>[.]/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+    if (previousRuntime === undefined) delete process.env.MDVIEW_RUNTIME_DIR;
+    else process.env.MDVIEW_RUNTIME_DIR = previousRuntime;
+  }
+});
+
+test("workspace Changes rolls a hidden repository sync into the next visible work revision", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-server-reader-changes-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const cache = path.join(root, "cache");
+  const runtime = path.join(root, "runtime");
+  const repo = path.join(root, "repo");
+  await mkdir(repo, { recursive: true });
+  const before = "# Packages\n\n- git\n- harlequin - Harlequin の readline/Emacs 風キーマップ\n- local-bin\n";
+  const after = "# Packages\n\n- git\n- local-bin\n";
+  const notes = "# Notes\n\nCurrent turn.\n";
+  const beforeHash = markdownContentHash(before);
+  const afterHash = markdownContentHash(after);
+  const notesHash = markdownContentHash(notes);
+
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  const previousRuntime = process.env.MDVIEW_RUNTIME_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  process.env.MDVIEW_RUNTIME_DIR = runtime;
+  try {
+    await Promise.all([before, after, notes].map((markdown) => storeHistorySnapshot(markdown)));
+    const { registerWorkspaceRevision, workspaceDocumentId } = await import(`../src/workspace-history.mjs?reader-changes-server=${Date.now()}`);
+    const first = await registerWorkspaceRevision({
+      root: repo,
+      renderedAt: "2026-08-28T13:05:20.700Z",
+      source: "hook",
+      sessionId: "session-1",
+      turnId: "turn-1",
+      files: { "README.md": beforeHash },
+      changes: [{ path: "README.md", beforeContentHash: null, contentHash: beforeHash }],
+    });
+    const hidden = await registerWorkspaceRevision({
+      root: repo,
+      renderedAt: "2026-08-29T04:18:37.237Z",
+      source: "repository-sync",
+      files: { "README.md": afterHash },
+      changes: [{ path: "README.md", beforeContentHash: beforeHash, contentHash: afterHash }],
+    });
+    const current = await registerWorkspaceRevision({
+      root: repo,
+      renderedAt: "2026-08-29T04:27:46.950Z",
+      source: "hook",
+      sessionId: "session-2",
+      turnId: "turn-2",
+      files: { "NOTES.md": notesHash, "README.md": afterHash },
+      changes: [{ path: "NOTES.md", beforeContentHash: null, contentHash: notesHash }],
+    });
+
+    const { startServer } = await import(`../src/server.mjs?reader-changes-server=${Date.now()}`);
+    const server = await startServer({ port: 0, reconcileWorkspace: async () => {} });
+    context.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const documentId = workspaceDocumentId(repo, "README.md");
+    const details = await fetch(`${origin}/__mdview/workspaces/${current.manifest.workspaceId}?revision=${current.revision.id}&document=${documentId}`).then((response) => response.json());
+
+    assert.deepEqual(details.revisions.map((revision) => revision.id), [first.revision.id, current.revision.id]);
+    assert.ok(!details.revisions.some((revision) => revision.id === hidden.revision.id));
+    const readme = details.files.find((file) => file.relativePath === "README.md");
+    assert.equal(readme.changeKind, "modified");
+    assert.equal(readme.updatedAt, current.revision.renderedAt);
+
+    const html = await fetch(`${origin}${readme.href}?view=changes`).then((response) => response.text());
+    assert.match(html, /data-view="changes"/);
+    assert.match(html, /<li data-diff-kind="removed"[^>]*>.*harlequin - Harlequin の readline[/]Emacs 風キーマップ.*<\/li>/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

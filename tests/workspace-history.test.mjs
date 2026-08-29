@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  readerWorkspaceChanges,
   readWorkspaceHistories,
   readWorkspaceHistory,
   registerWorkspaceRevision,
@@ -11,6 +12,47 @@ import {
   workspaceFileAtRevision,
   workspaceHistoryId,
 } from "../src/workspace-history.mjs";
+
+test("reader changes span repository sync revisions hidden between work turns", async (t) => {
+  const historyRoot = await mkdtemp(path.join(os.tmpdir(), "mdview-workspace-reader-changes-"));
+  t.after(() => rm(historyRoot, { recursive: true, force: true }));
+  const root = path.join(historyRoot, "repo");
+  const withHarlequin = "a".repeat(64);
+  const withoutHarlequin = "b".repeat(64);
+  const notes = "c".repeat(64);
+
+  const first = await registerWorkspaceRevision({
+    root,
+    renderedAt: "2026-08-28T13:05:20.700Z",
+    source: "hook",
+    sessionId: "session-1",
+    turnId: "turn-1",
+    files: { "README.md": withHarlequin },
+    changes: [{ path: "README.md", beforeContentHash: null, contentHash: withHarlequin }],
+  }, { root: historyRoot });
+  await registerWorkspaceRevision({
+    root,
+    renderedAt: "2026-08-29T04:18:37.237Z",
+    source: "repository-sync",
+    files: { "README.md": withoutHarlequin },
+    changes: [{ path: "README.md", beforeContentHash: withHarlequin, contentHash: withoutHarlequin }],
+  }, { root: historyRoot });
+  const current = await registerWorkspaceRevision({
+    root,
+    renderedAt: "2026-08-29T04:27:46.950Z",
+    source: "hook",
+    sessionId: "session-2",
+    turnId: "turn-2",
+    files: { "NOTES.md": notes, "README.md": withoutHarlequin },
+    changes: [{ path: "NOTES.md", beforeContentHash: null, contentHash: notes }],
+  }, { root: historyRoot });
+
+  assert.deepEqual(readerWorkspaceChanges(current.manifest, current.revision.id), [
+    { path: "NOTES.md", kind: "added", beforeContentHash: null, contentHash: notes },
+    { path: "README.md", kind: "modified", beforeContentHash: withHarlequin, contentHash: withoutHarlequin },
+  ]);
+  assert.deepEqual(readerWorkspaceChanges(current.manifest, first.revision.id), first.revision.changes);
+});
 
 test("workspace history stores complete Markdown snapshots and turn changes", async (t) => {
   const historyRoot = await mkdtemp(path.join(os.tmpdir(), "mdview-workspace-history-"));
