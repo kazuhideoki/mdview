@@ -514,7 +514,7 @@ async function workspaceDetails(request, response, requestUrl, workspaceId, opti
   }
   const workspace = await readWorkspaceHistory(workspaceId);
   if (!workspace.root || workspace.revisions.length === 0) return respond(response, 404, "Not Found");
-  const requestedRevisionId = requestUrl.searchParams.get("revision") || workspace.revisions.at(-1).id;
+  const requestedRevisionId = requestUrl.searchParams.get("revision") || latestReaderRevision(workspace).id;
   const currentDocumentId = requestUrl.searchParams.get("document");
   const requestedLineageId = requestUrl.searchParams.get("lineage");
   if (!/^[a-f0-9]{24}$/.test(requestedRevisionId)) return respond(response, 400, "Bad Request");
@@ -535,20 +535,22 @@ async function workspaceDetails(request, response, requestUrl, workspaceId, opti
   const expandedLineage = lineage.nodes.some((candidate) => candidate.imported);
   const preserveLineage = requestedLineageId !== null ? lineageWorkspaceId : null;
   const files = projectWorkspaceFiles(workspace, revision, preserveLineage);
-  const revisions = lineage.nodes.map((candidate) => ({
-    id: candidate.revision.id,
-    workspaceId: candidate.workspaceId,
-    renderedAt: candidate.revision.renderedAt,
-    source: candidate.revision.source,
-    sessionId: candidate.revision.sessionId,
-    turnId: candidate.revision.turnId,
-    worktree: candidate.revision.meta.worktree,
-    branch: candidate.revision.meta.branch,
-    imported: candidate.imported,
-    lineageReason: candidate.lineageReason,
-    href: lineageRevisionHref(candidate, preferredRelativePath, expandedLineage ? lineageWorkspaceId : null),
-    ...(candidate.workspaceId === workspaceId && candidate.revision.id === revision.id ? { sessionTitle } : {}),
-  }));
+  const revisions = lineage.nodes
+    .filter((candidate) => isReaderHistoryNode(candidate, currentNode))
+    .map((candidate) => ({
+      id: candidate.revision.id,
+      workspaceId: candidate.workspaceId,
+      renderedAt: candidate.revision.renderedAt,
+      source: candidate.revision.source,
+      sessionId: candidate.revision.sessionId,
+      turnId: candidate.revision.turnId,
+      worktree: candidate.revision.meta.worktree,
+      branch: candidate.revision.meta.branch,
+      imported: candidate.imported,
+      lineageReason: candidate.lineageReason,
+      href: lineageRevisionHref(candidate, preferredRelativePath, expandedLineage ? lineageWorkspaceId : null),
+      ...(candidate.workspaceId === workspaceId && candidate.revision.id === revision.id ? { sessionTitle } : {}),
+    }));
   const body = `${JSON.stringify({
     workspaceId,
     revisionId: revision.id,
@@ -565,6 +567,23 @@ async function workspaceDetails(request, response, requestUrl, workspaceId, opti
   });
 }
 
+function isReaderHistoryNode(candidate, currentNode) {
+  if (candidate.workspaceId === currentNode.workspaceId && candidate.revision.id === currentNode.revision.id) {
+    return true;
+  }
+  return isReaderRevision(candidate.revision);
+}
+
+function isReaderRevision(revision) {
+  if (revision.source === "repository-sync") return revision.mergeSources.length > 0;
+  if (revision.source === "hook") return revision.changes.length > 0 || revision.mergeSources.length > 0;
+  return true;
+}
+
+function latestReaderRevision(workspace) {
+  return [...workspace.revisions].reverse().find(isReaderRevision) || workspace.revisions.at(-1);
+}
+
 async function reconcileWorkspaceOnce(workspaceId, reconcileWorkspace) {
   if (!workspaceReconciliations.has(workspaceId)) {
     const operation = Promise.resolve()
@@ -576,7 +595,7 @@ async function reconcileWorkspaceOnce(workspaceId, reconcileWorkspace) {
 }
 
 function projectWorkspaceSummary(workspace) {
-  const revision = workspace.revisions.at(-1);
+  const revision = latestReaderRevision(workspace);
   return {
     id: workspace.workspaceId,
     repo: revision.meta.repo,
