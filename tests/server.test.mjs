@@ -581,7 +581,7 @@ test("main workspace history expands merged worktree sessions and keeps lineage 
       turnId: "feature-turn-1",
       meta: { ...commonMeta, worktree: "feature/docs", branch: "feature/docs", head: "bbbbbbb" },
       files: { "README.md": "b".repeat(64) },
-      changes: [],
+      changes: [{ path: "README.md", beforeContentHash: null, contentHash: "b".repeat(64) }],
     });
     const feature2 = await registerWorkspaceRevision({
       root: featureRoot,
@@ -591,7 +591,7 @@ test("main workspace history expands merged worktree sessions and keeps lineage 
       turnId: "feature-turn-2",
       meta: { ...commonMeta, worktree: "feature/docs", branch: "feature/docs", head: "ccccccc" },
       files: { "README.md": "c".repeat(64) },
-      changes: [],
+      changes: [{ path: "README.md", beforeContentHash: "b".repeat(64), contentHash: "c".repeat(64) }],
     });
     const main1 = await registerWorkspaceRevision({
       root: mainRoot,
@@ -601,22 +601,42 @@ test("main workspace history expands merged worktree sessions and keeps lineage 
       turnId: "main-turn-1",
       meta: { ...commonMeta, worktree: "repo", branch: "main", head: "aaaaaaa" },
       files: { "README.md": "a".repeat(64) },
+      changes: [{ path: "README.md", beforeContentHash: null, contentHash: "a".repeat(64) }],
+    });
+    await registerWorkspaceRevision({
+      root: mainRoot,
+      renderedAt: "2026-08-16T09:30:00.000Z",
+      source: "repository-sync",
+      sessionId: null,
+      turnId: null,
+      meta: { ...commonMeta, worktree: "repo", branch: "main", head: "aaaaaaa" },
+      files: { "README.md": "a".repeat(64) },
       changes: [],
     });
     const main2 = await registerWorkspaceRevision({
       root: mainRoot,
       renderedAt: "2026-08-16T12:00:00.000Z",
-      source: "hook",
-      sessionId: "merge-session",
-      turnId: "main-turn-2",
+      source: "repository-sync",
+      sessionId: null,
+      turnId: null,
       meta: { ...commonMeta, worktree: "repo", branch: "main", head: "ddddddd" },
       files: { "README.md": "c".repeat(64) },
-      changes: [],
+      changes: [{ path: "README.md", beforeContentHash: "a".repeat(64), contentHash: "c".repeat(64) }],
       mergeSources: [{
         workspaceId: workspaceHistoryId(featureRoot),
         throughRevisionId: feature2.revision.id,
         reason: "git-ancestry",
       }],
+    });
+    const hiddenSync = await registerWorkspaceRevision({
+      root: mainRoot,
+      renderedAt: "2026-08-16T13:00:00.000Z",
+      source: "repository-sync",
+      sessionId: null,
+      turnId: null,
+      meta: { ...commonMeta, worktree: "repo", branch: "main", head: "eeeeeee" },
+      files: { "README.md": "c".repeat(64) },
+      changes: [],
     });
 
     const { startServer } = await import(`../src/server.mjs?lineage-server=${Date.now()}`);
@@ -629,7 +649,7 @@ test("main workspace history expands merged worktree sessions and keeps lineage 
       "main-session",
       "feature-session-1",
       "feature-session-2",
-      "merge-session",
+      null,
     ]);
     assert.deepEqual(mainDetails.revisions.map((revision) => revision.imported), [false, true, true, false]);
     assert.deepEqual(mainDetails.revisions.map((revision) => revision.lineageReason), [null, "git-ancestry", "git-ancestry", null]);
@@ -643,6 +663,17 @@ test("main workspace history expands merged worktree sessions and keeps lineage 
     assert.ok(sourceDetails.files.every((file) => file.href.endsWith(`?lineage=${main2.manifest.workspaceId}`)));
     assert.equal(sourceDetails.lineageWorkspaceId, main2.manifest.workspaceId);
     assert.equal(mainDetails.revisions[0].id, main1.revision.id);
+    assert.ok(!mainDetails.revisions.some((revision) => revision.id === hiddenSync.revision.id));
+
+    const defaultDetails = await fetch(`${origin}/__mdview/workspaces/${main2.manifest.workspaceId}?document=${mainDocumentId}`).then((response) => response.json());
+    assert.equal(defaultDetails.revisionId, main2.revision.id);
+    const mainSummary = (await fetch(`${origin}/__mdview/workspaces`).then((response) => response.json()))
+      .find((summary) => summary.id === main2.manifest.workspaceId);
+    assert.equal(mainSummary.revisionId, main2.revision.id);
+
+    const hiddenDetails = await fetch(`${origin}/__mdview/workspaces/${main2.manifest.workspaceId}?revision=${hiddenSync.revision.id}&document=${mainDocumentId}`).then((response) => response.json());
+    assert.equal(hiddenDetails.revisionId, hiddenSync.revision.id);
+    assert.ok(hiddenDetails.revisions.some((revision) => revision.id === hiddenSync.revision.id));
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

@@ -279,11 +279,12 @@ async function readState(filePath) {
   }
 }
 
-function stateRecord(snapshot, now, previous = null) {
+function stateRecord(snapshot, now, previous = null, options = {}) {
   return {
     version: 1,
     createdAt: previous?.createdAt || new Date(now).toISOString(),
     updatedAt: new Date(now).toISOString(),
+    completed: options.completed ?? previous?.completed === true,
     root: snapshot.root,
     files: snapshot.files,
   };
@@ -350,7 +351,7 @@ export async function processHookEvent(payload, options = {}) {
   if (eventName !== "UserPromptSubmit" && eventName !== "Stop") {
     return { action: "ignored", reason: "unsupported-event", changedFiles: [], deletedFiles: [] };
   }
-  if (eventName === "UserPromptSubmit" && payload.agent_id != null) {
+  if (payload.agent_id != null) {
     return { action: "ignored", reason: "subagent", changedFiles: [], deletedFiles: [] };
   }
   hookStateKey(payload);
@@ -380,7 +381,8 @@ export async function processHookEvent(payload, options = {}) {
     }
 
     const previous = await readState(filePath);
-    const differences = previous
+    const turnAlreadyCompleted = previous?.completed === true;
+    const differences = previous && !turnAlreadyCompleted
       ? compareSnapshots(previous.files, snapshot.files)
       : { changed: [], deleted: [] };
     await persistSnapshotFiles(snapshot, previous ? differences.changed : Object.keys(snapshot.files), historyOptions);
@@ -404,11 +406,17 @@ export async function processHookEvent(payload, options = {}) {
     ];
     const existingWorkspace = await readWorkspaceHistoryForRoot(snapshot.root, historyOptions);
     const existingRevision = existingWorkspace?.revisions.at(-1);
-    const meta = await workspaceMeta(snapshot.root);
+    const hasTurnChanges = turnChanges.length > 0;
+    const sameTurnRevision = hasTurnChanges
+      && existingRevision?.source === "hook"
+      && existingRevision.sessionId === payload.session_id
+      && existingRevision.turnId === payload.turn_id
+      && workspaceFilesEqual(existingRevision.files, snapshot.files);
+    const meta = hasTurnChanges && !sameTurnRevision ? await workspaceMeta(snapshot.root) : null;
     const filesEqual = existingRevision && workspaceFilesEqual(existingRevision.files, snapshot.files);
-    const gitChanged = existingRevision && gitRevisionChanged(existingRevision.meta, meta);
+    const gitChanged = meta && existingRevision && gitRevisionChanged(existingRevision.meta, meta);
     let mergeSources = [];
-    if (!filesEqual || gitChanged) {
+    if (hasTurnChanges && !sameTurnRevision && (!filesEqual || gitChanged)) {
       mergeSources = await discoverMergeSources({
         destination: existingWorkspace,
         destinationRoot: snapshot.root,
@@ -417,28 +425,36 @@ export async function processHookEvent(payload, options = {}) {
         renderedAt,
       }, historyOptions);
     }
-    const workspaceRevision = filesEqual && mergeSources.length === 0
-      ? { manifest: existingWorkspace, revision: existingRevision, added: false }
-      : await registerWorkspaceRevision({
-        root: snapshot.root,
-        renderedAt,
-        source: "hook",
-        sessionId: payload.session_id,
-        turnId: payload.turn_id,
-        meta,
-        files: snapshot.files,
-        changes: existingRevision ? compareWorkspaceFiles(existingRevision.files, snapshot.files) : turnChanges,
-        mergeSources,
-      }, historyOptions);
-    if (typeof options.beforeStateAdvance === "function") await options.beforeStateAdvance(workspaceRevision, payload);
-    await atomicWriteJson(filePath, stateRecord(snapshot, now, previous));
+    const workspaceRevision = !hasTurnChanges
+      ? null
+      : sameTurnRevision
+        ? { manifest: existingWorkspace, revision: existingRevision, added: false }
+        : await registerWorkspaceRevision({
+          root: snapshot.root,
+          renderedAt,
+          source: "hook",
+          sessionId: payload.session_id,
+          turnId: payload.turn_id,
+          meta,
+          files: snapshot.files,
+          changes: turnChanges,
+          mergeSources,
+        }, historyOptions);
+    if (workspaceRevision && typeof options.beforeStateAdvance === "function") {
+      await options.beforeStateAdvance(workspaceRevision, payload);
+    }
+    await atomicWriteJson(filePath, stateRecord(snapshot, now, previous, { completed: true }));
     const result = {
-      action: previous ? "compared" : "baseline-created",
+      action: !previous
+        ? "baseline-created"
+        : turnAlreadyCompleted
+          ? "already-completed"
+          : hasTurnChanges ? "compared" : "unchanged",
       root: snapshot.root,
       statePath: filePath,
-      renderedAt: workspaceRevision.revision.renderedAt,
-      workspaceId: workspaceRevision.manifest.workspaceId,
-      workspaceRevisionId: workspaceRevision.revision.id,
+      renderedAt: workspaceRevision?.revision.renderedAt ?? null,
+      workspaceId: workspaceRevision?.manifest.workspaceId ?? existingWorkspace.workspaceId,
+      workspaceRevisionId: workspaceRevision?.revision.id ?? null,
       changedFiles,
       deletedFiles,
       changes: differences.changed.map((relativePath) => ({

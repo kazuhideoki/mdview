@@ -21,7 +21,6 @@ import {
   processHookEvent,
   scanMarkdownFiles,
 } from "../src/hook-event.mjs";
-import { readHistorySnapshot } from "../src/history.mjs";
 import { readWorkspaceHistoryForRoot } from "../src/workspace-history.mjs";
 
 const run = promisify(execFile);
@@ -98,15 +97,15 @@ test("UserPromptSubmit preserves its first baseline; Stop detects and advances i
   assert.equal(callbacks.length, 1);
 });
 
-test("a Stop without a prompt establishes a baseline without reporting every document", async (t) => {
+test("a Stop without a root prompt does not create a reader work revision", async (t) => {
   const { cwd, stateDir, historyRoot } = await fixture(t);
   await writeFile(path.join(cwd, "README.md"), "existing\n");
   const result = await processHookEvent(payload(cwd, "Stop"), { stateDir, historyRoot });
   assert.equal(result.action, "baseline-created");
   assert.deepEqual(result.changedFiles, []);
   const workspaceHistory = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
-  assert.equal(workspaceHistory.revisions.length, 1);
-  assert.equal(await readHistorySnapshot(workspaceHistory.revisions[0].files["README.md"], { root: historyRoot }), "existing\n");
+  assert.equal(workspaceHistory.revisions.length, 0);
+  assert.equal(result.workspaceRevisionId, null);
 });
 
 test("a Stop asks repository sync to update the primary worktree", async (t) => {
@@ -125,7 +124,7 @@ test("a Stop asks repository sync to update the primary worktree", async (t) => 
   assert.equal(result.repositorySync.action, "reconciled");
 });
 
-test("a new session records changes that arrived before its prompt against the prior workspace revision", async (t) => {
+test("a new turn does not record changes that arrived before its prompt", async (t) => {
   const { cwd, stateDir, historyRoot } = await fixture(t);
   const markdownPath = path.join(cwd, "README.md");
   await writeFile(markdownPath, "before\n");
@@ -144,13 +143,37 @@ test("a new session records changes that arrived before its prompt against the p
 
   assert.deepEqual(stop.changedFiles, []);
   const workspace = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
+  assert.equal(workspace.revisions.length, 1);
+  assert.equal(stop.workspaceRevisionId, null);
+});
+
+test("a work revision contains only changes made after its root prompt", async (t) => {
+  const { cwd, stateDir, historyRoot } = await fixture(t);
+  const markdownPath = path.join(cwd, "README.md");
+  await writeFile(markdownPath, "before\n");
+  await processHookEvent(payload(cwd, "UserPromptSubmit"), { stateDir, historyRoot });
+  await writeFile(markdownPath, "first session\n");
+  await processHookEvent(payload(cwd, "Stop"), { stateDir, historyRoot, now: Date.parse("2026-08-16T10:00:00Z") });
+
+  await writeFile(markdownPath, "existing before prompt\n");
+  const nextPrompt = payload(cwd, "UserPromptSubmit", { session_id: "session-b", turn_id: "turn-2" });
+  await processHookEvent(nextPrompt, { stateDir, historyRoot });
+  await writeFile(markdownPath, "second session\n");
+  const stop = await processHookEvent({ ...nextPrompt, hook_event_name: "Stop" }, {
+    stateDir,
+    historyRoot,
+    now: Date.parse("2026-08-16T11:00:00Z"),
+  });
+
+  assert.deepEqual(stop.changedFiles, [markdownPath]);
+  const workspace = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
   assert.equal(workspace.revisions.length, 2);
   assert.equal(workspace.revisions[1].sessionId, "session-b");
   assert.deepEqual(workspace.revisions[1].changes, [{
     path: "README.md",
     kind: "modified",
-    beforeContentHash: createHash("sha256").update("first session\n").digest("hex"),
-    contentHash: createHash("sha256").update("merged before next session\n").digest("hex"),
+    beforeContentHash: createHash("sha256").update("existing before prompt\n").digest("hex"),
+    contentHash: createHash("sha256").update("second session\n").digest("hex"),
   }]);
 });
 
@@ -198,6 +221,25 @@ test("concurrent Stops serialize state advancement and store one turn revision",
   assert.equal((await readWorkspaceHistoryForRoot(cwd, { root: historyRoot })).revisions.length, 1);
 });
 
+test("a completed turn does not create another revision when a later Stop observes more changes", async (t) => {
+  const { cwd, stateDir, historyRoot } = await fixture(t);
+  const markdownPath = path.join(cwd, "README.md");
+  const event = payload(cwd, "UserPromptSubmit");
+  await writeFile(markdownPath, "before\n");
+  await processHookEvent(event, { stateDir, historyRoot });
+  await writeFile(markdownPath, "first Stop\n");
+  await processHookEvent({ ...event, hook_event_name: "Stop" }, { stateDir, historyRoot });
+
+  await writeFile(markdownPath, "after completed Stop\n");
+  const repeated = await processHookEvent({ ...event, hook_event_name: "Stop" }, { stateDir, historyRoot });
+
+  assert.equal(repeated.action, "already-completed");
+  assert.deepEqual(repeated.changedFiles, []);
+  const workspace = await readWorkspaceHistoryForRoot(cwd, { root: historyRoot });
+  assert.equal(workspace.revisions.length, 1);
+  assert.equal(workspace.revisions[0].turnId, event.turn_id);
+});
+
 test("nullable payload fields and Japanese paths do not affect snapshotting", async (t) => {
   const { directory, stateDir, historyRoot } = await fixture(t);
   const cwd = path.join(directory, "日本 語 workspace");
@@ -212,18 +254,21 @@ test("nullable payload fields and Japanese paths do not affect snapshotting", as
   assert.equal(Object.keys(JSON.parse(await readFile(result.statePath, "utf8")).files)[0], "設計 メモ.md");
 });
 
-test("subagent UserPromptSubmit events are ignored before state is created", async (t) => {
+test("subagent prompt and Stop events are ignored before state is created", async (t) => {
   const { cwd, stateDir, historyRoot } = await fixture(t);
   await writeFile(path.join(cwd, "README.md"), "hello\n");
-  const event = payload(cwd, "UserPromptSubmit", { agent_id: "agent-2" });
-  const result = await processHookEvent(event, { stateDir, historyRoot });
-  assert.deepEqual(result, {
-    action: "ignored",
-    reason: "subagent",
-    changedFiles: [],
-    deletedFiles: [],
-  });
-  await assert.rejects(access(hookStatePath(event, { stateDir })));
+  for (const eventName of ["UserPromptSubmit", "Stop"]) {
+    const event = payload(cwd, eventName, { agent_id: "agent-2" });
+    const result = await processHookEvent(event, { stateDir, historyRoot });
+    assert.deepEqual(result, {
+      action: "ignored",
+      reason: "subagent",
+      changedFiles: [],
+      deletedFiles: [],
+    });
+    await assert.rejects(access(hookStatePath(event, { stateDir })));
+  }
+  assert.equal((await readWorkspaceHistoryForRoot(cwd, { root: historyRoot })).revisions.length, 0);
 });
 
 test("scanner ignores dependency and build directories outside git", async (t) => {
