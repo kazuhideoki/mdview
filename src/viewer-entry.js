@@ -6,10 +6,15 @@ const documentId = app?.dataset.documentId || "";
 const revisionId = app?.dataset.revisionId || "";
 const workspaceId = app?.dataset.workspaceId || "";
 const workspaceRevisionId = app?.dataset.workspaceRevisionId || "";
+const currentRelativePath = app?.dataset.currentRelativePath || "";
 const lineageWorkspaceId = /^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get("lineage") || "")
   ? new URLSearchParams(location.search).get("lineage")
   : "";
 const storageKey = documentId ? `mdview:document:${documentId}` : `mdview:${location.pathname}`;
+const workspaceHistoryIdentity = workspaceHistoryCacheIdentity(lineageWorkspaceId, workspaceId, currentRelativePath);
+const workspaceHistoryStorageKey = workspaceHistoryIdentity
+  ? `mdview:workspace-history:${workspaceHistoryIdentity.lineageWorkspaceId}:${workspaceHistoryIdentity.relativePath}`
+  : "";
 const searchOverlay = document.querySelector("[data-search-overlay]");
 const searchInput = document.querySelector("#mdv-search-input");
 const searchResults = document.querySelector("#mdv-search-results");
@@ -58,6 +63,7 @@ const workspaceState = {
   workspaces: [],
   payload: null,
   loading: null,
+  refreshing: null,
   optionsLoaded: false,
   optionsLoading: null,
 };
@@ -158,7 +164,10 @@ restoreRevisionNavigation();
 restoreRequestedView();
 observeHeadings();
 renderDiagrams();
-if (workspaceId && workspaceRevisionId) loadWorkspaceContext();
+if (workspaceId && workspaceRevisionId) {
+  restoreWorkspaceHistoryCursor();
+  loadWorkspaceContext();
+}
 else loadHistory();
 
 function setView(view) {
@@ -1058,6 +1067,7 @@ function trapPaletteFocus(overlay, event) {
 async function loadWorkspaceContext() {
   try {
     await ensureWorkspaceDetails();
+    refreshWorkspaceDetailsAfterReconcile();
   } catch (error) {
     if (workspaceFilesStatus) workspaceFilesStatus.textContent = "ワークツリーのファイルを読み込めませんでした";
     console.error("mdview: workspace context fetch failed", error);
@@ -1069,9 +1079,7 @@ async function ensureWorkspaceDetails(signal) {
   if (workspaceState.payload) return workspaceState.payload;
   if (!workspaceId || !workspaceRevisionId) throw new Error("This document has no workspace revision.");
   if (workspaceState.loading) return workspaceState.loading;
-  const params = new URLSearchParams({ revision: workspaceRevisionId });
-  if (documentId) params.set("document", documentId);
-  if (lineageWorkspaceId) params.set("lineage", lineageWorkspaceId);
+  const params = workspaceDetailsParams();
   const operation = fetch(`/__mdview/workspaces/${encodeURIComponent(workspaceId)}?${params}`, {
     headers: { accept: "application/json" },
     cache: "no-store",
@@ -1079,18 +1087,90 @@ async function ensureWorkspaceDetails(signal) {
   }).then(async (response) => {
     if (!response.ok) throw new Error(`workspace returned ${response.status}`);
     const payload = await response.json();
-    workspaceState.payload = payload;
-    workspaceState.files = normalizeWorkspaceFiles(payload);
-    renderWorkspaceFiles();
-    historyState.revisions = normalizeHistory(payload);
-    historyState.currentIndex = historyState.revisions.findIndex((revision) => revision.id === workspaceRevisionId);
-    refreshHistoryCursor();
+    applyWorkspaceDetails(payload);
     return payload;
   }).finally(() => {
     workspaceState.loading = null;
   });
   workspaceState.loading = operation;
   return operation;
+}
+
+function workspaceDetailsParams({ waitForSync = false } = {}) {
+  const params = new URLSearchParams({ revision: workspaceRevisionId });
+  if (documentId) params.set("document", documentId);
+  if (lineageWorkspaceId) params.set("lineage", lineageWorkspaceId);
+  if (waitForSync) params.set("sync", "wait");
+  return params;
+}
+
+function applyWorkspaceDetails(payload) {
+  workspaceState.payload = payload;
+  workspaceState.files = normalizeWorkspaceFiles(payload);
+  renderWorkspaceFiles();
+  historyState.revisions = normalizeHistory(payload);
+  historyState.currentIndex = historyState.revisions.findIndex((revision) => revision.id === workspaceRevisionId);
+  refreshHistoryCursor();
+  persistWorkspaceHistoryCursor();
+}
+
+function refreshWorkspaceDetailsAfterReconcile() {
+  if (workspaceState.refreshing) return workspaceState.refreshing;
+  const params = workspaceDetailsParams({ waitForSync: true });
+  const operation = fetch(`/__mdview/workspaces/${encodeURIComponent(workspaceId)}?${params}`, {
+    headers: { accept: "application/json" },
+    cache: "no-store",
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`workspace sync returned ${response.status}`);
+    applyWorkspaceDetails(await response.json());
+  }).catch((error) => {
+    console.error("mdview: workspace sync failed", error);
+  }).finally(() => {
+    workspaceState.refreshing = null;
+  });
+  workspaceState.refreshing = operation;
+  return operation;
+}
+
+function restoreWorkspaceHistoryCursor() {
+  if (!workspaceHistoryStorageKey || !workspaceHistoryIdentity) return;
+  let saved;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(workspaceHistoryStorageKey) || "null");
+  } catch {
+    return;
+  }
+  if (saved?.version !== 1
+    || saved.lineageWorkspaceId !== workspaceHistoryIdentity.lineageWorkspaceId
+    || saved.relativePath !== workspaceHistoryIdentity.relativePath) return;
+  const revisions = normalizeHistory(saved);
+  const currentIndex = revisions.findIndex((revision) => revision.id === workspaceRevisionId);
+  if (currentIndex < 0) return;
+  historyState.revisions = revisions;
+  historyState.currentIndex = currentIndex;
+  refreshHistoryCursor({ preserveSessionTitle: true });
+}
+
+function persistWorkspaceHistoryCursor() {
+  if (!workspaceHistoryStorageKey || !workspaceHistoryIdentity || historyState.currentIndex < 0) return;
+  try {
+    sessionStorage.setItem(workspaceHistoryStorageKey, JSON.stringify({
+      version: 1,
+      lineageWorkspaceId: workspaceHistoryIdentity.lineageWorkspaceId,
+      relativePath: workspaceHistoryIdentity.relativePath,
+      revisions: historyState.revisions,
+    }));
+  } catch {
+    // Navigation still works from the freshly loaded workspace response.
+  }
+}
+
+function workspaceHistoryCacheIdentity(lineageId, currentWorkspaceId, relativePath) {
+  if (!currentWorkspaceId || !relativePath) return null;
+  return {
+    lineageWorkspaceId: lineageId || currentWorkspaceId,
+    relativePath,
+  };
 }
 
 async function ensureWorkspaceOptions() {
@@ -1231,7 +1311,7 @@ function normalizeHistory(payload) {
   }).filter(Boolean);
 }
 
-function refreshHistoryCursor() {
+function refreshHistoryCursor({ preserveSessionTitle = false } = {}) {
   const previous = document.querySelector('[data-action="previous-revision"]');
   const next = document.querySelector('[data-action="next-revision"]');
   const status = document.querySelector("[data-history-status]");
@@ -1265,7 +1345,7 @@ function refreshHistoryCursor() {
     : 0;
   if (warningCount > 0) detail.append(document.createTextNode(` · マージ元履歴 ${warningCount}件未読込`));
   status.append(position, detail);
-  refreshSessionTitle(status, current.sessionTitle);
+  if (!preserveSessionTitle) refreshSessionTitle(status, current.sessionTitle);
 }
 
 function refreshSessionTitle(status, value) {
