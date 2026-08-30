@@ -41,3 +41,23 @@ test("outline palette previews selection and only keeps the position on confirma
   assert.match(source, /if \(restorePosition\) scrollViewportInstantly\(restorePosition\)/,
     "cancelling the palette should restore its opening position");
 });
+
+test("workspace history restores the N/P cursor before refreshing workspace details", async () => {
+  const source = await readFile(new URL("../src/viewer-entry.js", import.meta.url), "utf8");
+  const definition = source.match(/function workspaceHistoryCacheIdentity\(lineageId, currentWorkspaceId, relativePath\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(definition, "workspace history cache identity helper should exist");
+  const identity = vm.runInNewContext(`(${definition})`);
+
+  assert.match(source, /restoreWorkspaceHistoryCursor\(\);\s+loadWorkspaceContext\(\);/,
+    "the saved cursor should be available before the workspace request starts");
+  assert.equal(JSON.stringify(identity("main-workspace", "main-workspace", "README.md")),
+    JSON.stringify(identity("main-workspace", "feature-workspace", "README.md")),
+    "the same Markdown path should share one cursor across imported worktrees in a lineage");
+  assert.notEqual(JSON.stringify(identity("main-workspace", "main-workspace", "README.md")),
+    JSON.stringify(identity("main-workspace", "main-workspace", "docs/README.md")),
+    "different Markdown paths should not share a cursor");
+  assert.match(source, /refreshHistoryCursor\(\{ preserveSessionTitle: true \}\)/,
+    "restoring navigation should keep the freshly rendered session title");
+  assert.match(source, /workspaceDetailsParams\(\{ waitForSync: true \}\)/,
+    "the fast response should be followed by a background reconciliation refresh");
+});

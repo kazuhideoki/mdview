@@ -481,7 +481,7 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     assert.deepEqual(workspace.revisions[0].changes, []);
     const secondId = workspaceDocumentId(repo, "second.md");
     const reconciledWorkspaces = [];
-    let reconcileMode = "success";
+    let reconcileMode = "blocked";
     let releaseReconcile = null;
     const { startServer } = await import(`../src/server.mjs?workspace-server=${Date.now()}`);
     const server = await startServer({
@@ -498,7 +498,8 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     const summaries = await fetch(`${origin}/__mdview/workspaces`).then((response) => response.json());
     assert.equal(summaries.length, 1);
     assert.equal(summaries[0].worktree, "feature/docs");
-    const details = await fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`).then((response) => response.json());
+    const detailsUrl = `${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`;
+    const details = await fetch(detailsUrl).then((response) => response.json());
     assert.deepEqual(reconciledWorkspaces, [workspace.workspaceId]);
     assert.deepEqual(details.files.map((file) => file.relativePath), ["second.md", "first.md"]);
     assert.deepEqual(details.files.map((file) => file.updatedAt), [
@@ -508,8 +509,18 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     assert.equal(details.revisions.length, 2);
     assert.ok(details.revisions.every((revision) => revision.href.includes(`/files/${secondId}`)));
 
+    const initialSync = fetch(`${detailsUrl}&sync=wait`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(reconciledWorkspaces, [workspace.workspaceId], "the background refresh should join the in-flight reconciliation");
+    releaseReconcile();
+    assert.equal((await initialSync).status, 200);
+
     reconcileMode = "failure";
-    const fallbackDetails = await fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`);
+    const callsBeforeFailure = reconciledWorkspaces.length;
+    assert.equal((await fetch(detailsUrl)).status, 200);
+    assert.equal(reconciledWorkspaces.length, callsBeforeFailure + 1,
+      "a later workspace response should start a fresh reconciliation");
+    const fallbackDetails = await fetch(`${detailsUrl}&sync=wait`);
     assert.equal(fallbackDetails.status, 200);
     assert.deepEqual((await fallbackDetails.json()).lineageWarnings, [{
       workspaceId: workspace.workspaceId,
@@ -518,9 +529,10 @@ test("workspace endpoints scope files and history to one worktree revision", asy
 
     reconcileMode = "blocked";
     const callsBeforeConcurrent = reconciledWorkspaces.length;
+    assert.equal((await fetch(detailsUrl)).status, 200);
     const concurrentDetails = [
-      fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`),
-      fetch(`${origin}/__mdview/workspaces/${workspace.workspaceId}?revision=${currentRevision.id}&document=${secondId}`),
+      fetch(`${detailsUrl}&sync=wait`),
+      fetch(`${detailsUrl}&sync=wait`),
     ];
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(reconciledWorkspaces.length, callsBeforeConcurrent + 1);

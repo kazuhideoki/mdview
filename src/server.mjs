@@ -508,12 +508,13 @@ function projectHistoryRevision(revision, options = {}) {
 
 async function workspaceDetails(request, response, requestUrl, workspaceId, options) {
   const reconcileWorkspace = options.reconcileWorkspace || reconcileWorkspaceHistory;
-  let reconcileWarning = null;
-  try {
-    await reconcileWorkspaceOnce(workspaceId, reconcileWorkspace);
-  } catch {
-    reconcileWarning = { workspaceId, code: "repository-sync-failed" };
-  }
+  const waitForSync = requestUrl.searchParams.get("sync") === "wait";
+  const reconciliation = waitForSync
+    ? currentWorkspaceReconciliation(workspaceId, reconcileWorkspace)
+    : beginWorkspaceReconciliation(workspaceId, reconcileWorkspace);
+  const reconcileWarning = waitForSync
+    ? await reconciliation.operation
+    : null;
   const workspace = await readWorkspaceHistory(workspaceId);
   if (!workspace.root || workspace.revisions.length === 0) return respond(response, 404, "Not Found");
   const requestedRevisionId = requestUrl.searchParams.get("revision") || latestReaderRevision(workspace).id;
@@ -583,14 +584,25 @@ function latestReaderRevision(workspace) {
   return [...workspace.revisions].reverse().find(isReaderWorkspaceRevision) || workspace.revisions.at(-1);
 }
 
-async function reconcileWorkspaceOnce(workspaceId, reconcileWorkspace) {
-  if (!workspaceReconciliations.has(workspaceId)) {
-    const operation = Promise.resolve()
-      .then(() => reconcileWorkspace(workspaceId))
-      .finally(() => workspaceReconciliations.delete(workspaceId));
-    workspaceReconciliations.set(workspaceId, operation);
-  }
-  return workspaceReconciliations.get(workspaceId);
+function beginWorkspaceReconciliation(workspaceId, reconcileWorkspace) {
+  const current = workspaceReconciliations.get(workspaceId);
+  if (current && !current.completed) return current;
+  const state = { operation: null, completed: false, warning: null };
+  state.operation = Promise.resolve()
+    .then(() => reconcileWorkspace(workspaceId))
+    .then(() => null, () => ({ workspaceId, code: "repository-sync-failed" }))
+    .then((warning) => {
+      state.completed = true;
+      state.warning = warning;
+      return warning;
+    });
+  workspaceReconciliations.set(workspaceId, state);
+  return state;
+}
+
+function currentWorkspaceReconciliation(workspaceId, reconcileWorkspace) {
+  return workspaceReconciliations.get(workspaceId)
+    || beginWorkspaceReconciliation(workspaceId, reconcileWorkspace);
 }
 
 function projectWorkspaceSummary(workspace) {
