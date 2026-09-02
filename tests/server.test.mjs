@@ -549,10 +549,24 @@ test("workspace endpoints scope files and history to one worktree revision", asy
     assert.match(documentHtml, /data-diff-kind="removed"[^>]*><span class="mdv-inline-diff">Before<\/span>[.]<\/p>/);
     assert.match(documentHtml, /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">After<\/span>[.]<\/p>/);
 
+    const katexHref = documentHtml.match(/href="([^"/]*\/assets\/katex[.][a-f0-9]+[.]css)"/)?.[1]
+      ?? documentHtml.match(/href="([^" ]*katex[.][a-f0-9]+[.]css)"/)?.[1];
+    assert.ok(katexHref);
+    const katexPath = path.resolve(path.dirname(path.join(cache, "documents", "workspaces", workspace.workspaceId, currentRevision.id, secondId, "index.html")), katexHref);
+    const katexCss = await readFile(katexPath, "utf8");
+    const fontName = katexCss.match(/url\(fonts\/([^)]+)\)/)?.[1];
+    assert.ok(fontName);
+    const fontPath = path.join(path.dirname(katexPath), "fonts", fontName);
+    await readFile(fontPath);
+
     await unlink(path.join(runtime, "history", "objects", `${currentRevision.files["second.md"]}.md`));
+    await unlink(katexPath);
+    await unlink(fontPath);
     const recoveredSnapshot = await fetch(`${origin}${details.files.find((file) => file.documentId === secondId).href}?view=changes`);
     assert.equal(recoveredSnapshot.status, 200);
     assert.match(await recoveredSnapshot.text(), /data-diff-kind="added"[^>]*><span class="mdv-inline-diff">After<\/span>[.]<\/p>/);
+    assert.equal((await fetch(new URL(katexHref, origin))).status, 200);
+    assert.equal((await fetch(new URL(`fonts/${fontName}`, new URL(katexHref, origin)))).status, 200);
 
     const firstId = workspaceDocumentId(repo, "first.md");
     const firstHref = details.files.find((file) => file.documentId === firstId).href;

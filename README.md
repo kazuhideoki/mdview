@@ -6,7 +6,7 @@ Codex が 1 ターンの間に編集した Markdown を検出し、読みやす�
 
 - `Read` / `Changes` の切り替え
 - ワークツリー内のMarkdown一覧、見出し目次、作業履歴ナビゲーション、本文幅と文字サイズの調整
-- GFM、Shiki のコードハイライト、Mermaid、D2、相対画像
+- GFM、KaTeX によるインライン `$...$`／ブロック `$$...$$` 数式、Shiki のコードハイライト、Mermaid、D2、相対画像
 - root Codex の `UserPromptSubmit` で基準状態を保存し、同じターンの正常な `Stop` までに変更された Markdown だけ再描画
 - Hook ではブラウザを開かず、必要なときだけ `mdview` などで手動表示
 - `~/.codex/hooks.json` の既存設定を保った install / status / uninstall

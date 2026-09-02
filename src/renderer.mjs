@@ -105,7 +105,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   meta.revisionId = revisionId;
   const documentPath = documentOutputPath(meta);
   const outputDir = path.dirname(documentPath);
-  const { html, rawDiff, rendered, title, assets } = await renderMarkdownPage({
+  const { html, rawDiff, rendered, title, assets, assetPaths } = await renderMarkdownPage({
     markdown,
     beforePath,
     revisionDiff,
@@ -120,7 +120,7 @@ export async function renderMarkdownFile(inputPath, options = {}) {
   const outputPath = documentPath.replace(/[.]html$/i, `.${revisionId}.html`);
   await storeHistoryRenderedHtml(documentId, revisionId, html, historyOptions);
   await storeHistoryRawDiff(documentId, revisionId, rawDiff, historyOptions);
-  const artifactPaths = [...Object.values(assets)];
+  const artifactPaths = [...assetPaths];
   for (const directory of [path.join(outputDir, "_assets"), path.join(outputDir, "_diagrams")]) {
     if (await directoryExists(directory)) artifactPaths.push(directory);
   }
@@ -299,6 +299,7 @@ export async function renderWorkspaceRevision(workspaceId, workspaceRevisionId, 
   });
   const outputPath = path.join(outputDir, "index.html");
   await atomicWrite(outputPath, result.html);
+  await storeHistoryCacheArtifacts(result.assetPaths, { ...historyOptions, cacheRoot: cacheRoot() });
   return { ...result, outputPath, revision, meta, deleted };
 }
 
@@ -453,7 +454,7 @@ async function renderMarkdownPage({
   rendered.html = normalizeHtmlFragment(rendered.html);
   meta.changeCount = rendered.changeCount;
   meta.updatedLabel = updatedLabel;
-  const assets = await ensureAssets();
+  const { artifactPaths, ...assets } = await ensureAssets();
   await mkdir(outputDir, { recursive: true });
   const title = rendered.headings[0]?.text || path.basename(absolutePath);
   const html = pageTemplate({
@@ -466,7 +467,7 @@ async function renderMarkdownPage({
       Object.entries(assets).map(([name, filePath]) => [name, relativeWebPath(outputDir, filePath)]),
     ),
   });
-  return { html, rawDiff, rendered, title, assets };
+  return { html, rawDiff, rendered, title, assets, assetPaths: [...Object.values(assets), ...artifactPaths] };
 }
 
 function structuralDiffLines(tree, changedLines, hunks, side) {
@@ -696,7 +697,7 @@ function comparableTokens(value) {
 }
 
 function comparableNodeText(node) {
-  if (["code", "html"].includes(node.type) && typeof node.value === "string") return node.value;
+  if (["code", "html", "math"].includes(node.type) && typeof node.value === "string") return node.value;
   return inlineTextLayouts(node).map(({ value }) => value).join("\n");
 }
 
@@ -718,7 +719,7 @@ function markInlineTextChanges(previousNode, currentNode) {
 
 function semanticInlinePairs(previousNode, currentNode) {
   if (previousNode.type !== currentNode.type) return [];
-  if (["paragraph", "heading", "tableCell", "html"].includes(previousNode.type)) {
+  if (["paragraph", "heading", "tableCell", "html", "math"].includes(previousNode.type)) {
     return [[previousNode, currentNode]];
   }
   if (previousNode.type === "code") {
@@ -734,12 +735,12 @@ function semanticInlinePairs(previousNode, currentNode) {
 }
 
 function inlineTextLayouts(node) {
-  if (["code", "html"].includes(node.type) && typeof node.value === "string") {
+  if (["code", "html", "math"].includes(node.type) && typeof node.value === "string") {
     return [{ value: node.value, leaves: [{ node, start: 0, end: node.value.length }] }];
   }
   const layouts = [{ value: "", leaves: [] }];
   const append = (child) => {
-    if (["text", "inlineCode"].includes(child.type) && typeof child.value === "string") {
+    if (["text", "inlineCode", "inlineMath"].includes(child.type) && typeof child.value === "string") {
       const layout = layouts.at(-1);
       const start = layout.value.length;
       layout.value += child.value;

@@ -100,6 +100,7 @@ export async function startServer(options = {}) {
             html = rendered.html;
           } catch (error) {
             try {
+              await restoreHistoryCacheArtifacts({ cacheRoot: root });
               html = await readFile(workspaceRenderedHtmlPath(root, workspaceId, segments[4], segments[6]), "utf8");
             } catch (fallbackError) {
               if (fallbackError?.code === "ENOENT" || fallbackError?.code === "ENOTDIR") {

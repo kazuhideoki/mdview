@@ -134,6 +134,7 @@ export function pageTemplate({ title, contentHtml, headings, meta, assets }) {
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri '${meta.documentBaseHref ? "self" : "none"}'; form-action 'none'">
   ${meta.documentBaseHref ? `<base href="${escape(meta.documentBaseHref)}">` : ""}
   <title>${escape(title)} · mdview</title>
+  <link rel="stylesheet" href="${assets.katexStylesheet}">
   <link rel="stylesheet" href="${assets.stylesheet}">
 </head>
 <body>
