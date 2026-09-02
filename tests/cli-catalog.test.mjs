@@ -144,6 +144,10 @@ test("demo renders two revisions and opens the inline Changes view", async (t) =
   assert.match(renderedHtml, /class="line" data-line-number="5" data-diff-kind="removed"/);
   assert.match(renderedHtml, /class="line" data-line-number="5" data-diff-kind="added"/);
   assert.doesNotMatch(renderedHtml, /<figure class="mdv-block mdv-code"[^>]*data-diff-kind/);
+  assert.match(renderedHtml, /class="mdv-math mdv-math-inline"><span class="katex">/);
+  assert.match(renderedHtml, /class="mdv-block mdv-math mdv-math-display"/);
+  assert.match(renderedHtml, /katex[.][a-f0-9]+[.]css/);
+  assert.match(renderedHtml, /W =/);
 
   const history = await readDocumentHistory(entry.id, { root: path.join(current.runtime, "history") });
   assert.equal(history.revisions.length, 2);

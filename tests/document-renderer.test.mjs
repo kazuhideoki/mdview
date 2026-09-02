@@ -60,6 +60,26 @@ test("changed line parsing excludes unchanged diff context", () => {
   });
 });
 
+test("renders inline and display LaTeX with KaTeX", async () => {
+  const tree = parseMarkdown([
+    "Inline $E = mc^2$ formula.",
+    "",
+    "$$",
+    "\\int_0^1 x^2 \\, dx = \\frac{1}{3}",
+    "$$",
+    "",
+  ].join("\n"));
+  assert.equal(tree.children[0].children[1].type, "inlineMath");
+  assert.equal(tree.children[1].type, "math");
+
+  const rendered = await renderDocument(tree);
+  assert.match(rendered.html, /class="mdv-math mdv-math-inline"><span class="katex">/);
+  assert.match(rendered.html, /class="mdv-block mdv-math mdv-math-display"/);
+  assert.match(rendered.html, /class="katex-display"/);
+  assert.match(rendered.html, /<math[^>]+display="block"/);
+  assert.doesNotMatch(rendered.html, /\$E = mc\^2\$/);
+});
+
 test("outline candidate filtering excludes headings inside removed compound blocks", async () => {
   const rendered = await renderDocument(parseMarkdown("> ## Deleted nested heading\n"), {
     diffLines: [1],
@@ -427,6 +447,39 @@ test("highlights changed words inside paired paragraph replacements", async () =
     assert.match(html, /data-diff-kind="added"[^>]*>Deploy to the <span class="mdv-inline-diff">production<\/span> environment[.]<\/p>/);
     const viewerCss = await readFile(new URL("../src/viewer.css", import.meta.url), "utf8");
     assert.match(viewerCss, /data-view="changes"[^\n]+[.]mdv-inline-diff/);
+  } finally {
+    if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
+    else process.env.MDVIEW_CACHE_DIR = previousCache;
+  }
+});
+
+test("highlights paired inline and display math replacements", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mdview-render-math-diff-"));
+  const cache = path.join(root, "cache");
+  const historyRoot = path.join(root, "history");
+  const markdownPath = path.join(root, "math.md");
+  const previousCache = process.env.MDVIEW_CACHE_DIR;
+  process.env.MDVIEW_CACHE_DIR = cache;
+  try {
+    const { renderMarkdownFile } = await import(`../src/renderer.mjs?math-diff=${Date.now()}`);
+    await writeFile(markdownPath, "# Queue\n\nLoad is $\\rho = \\lambda / \\mu$.\n\n$$\nW = \\frac{1}{\\mu - \\lambda}\n$$\n");
+    await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "math", branch: "main", relativePath: "math.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T10:00:00.000Z" },
+    });
+    await writeFile(markdownPath, "# Queue\n\nLoad is $\\rho = \\lambda / \\theta$.\n\n$$\nW = \\frac{1}{\\theta - \\lambda}\n$$\n");
+    const result = await renderMarkdownFile(markdownPath, {
+      historyRoot,
+      meta: { repo: "math", branch: "main", relativePath: "math.md", repoRoot: root },
+      catalogContext: { source: "hook", renderedAt: "2026-08-13T11:00:00.000Z" },
+    });
+    const html = await readFile(result.outputPath, "utf8");
+
+    assert.match(html, /data-diff-kind="removed"[^>]*>Load is <span class="mdv-math mdv-math-inline"><span class="mdv-inline-diff"><span class="katex">/);
+    assert.match(html, /data-diff-kind="added"[^>]*>Load is <span class="mdv-math mdv-math-inline"><span class="mdv-inline-diff"><span class="katex">/);
+    assert.match(html, /class="mdv-block mdv-math mdv-math-display"[^>]*data-diff-kind="removed"[^>]*><div class="mdv-inline-diff"><span class="katex-display">/);
+    assert.match(html, /class="mdv-block mdv-math mdv-math-display"[^>]*data-diff-kind="added"[^>]*><div class="mdv-inline-diff"><span class="katex-display">/);
   } finally {
     if (previousCache === undefined) delete process.env.MDVIEW_CACHE_DIR;
     else process.env.MDVIEW_CACHE_DIR = previousCache;

@@ -1,4 +1,5 @@
 import { escape } from "html-escaper";
+import katex from "katex";
 import { codeToHtml } from "shiki";
 import { collectHeadings, collectInlineText, createSlugger, rangeHasChange } from "./document.mjs";
 import { sanitizeRawHtml } from "./raw-html.mjs";
@@ -58,6 +59,8 @@ async function renderNode(node, state, topLevel = false) {
     }
     case "paragraph":
       return `<p class="mdv-block mdv-paragraph"${changeAttr}${diffAttr}${sourceAttrs}>${await renderInlineChildren(node.children ?? [], state)}</p>`;
+    case "math":
+      return `<div class="mdv-block mdv-math mdv-math-display"${changeAttr}${diffAttr}${sourceAttrs}>${renderMathDiff(node, true)}</div>`;
     case "blockquote":
       return `<blockquote class="mdv-block mdv-blockquote"${changeAttr}${diffAttr}${sourceAttrs}>${await renderChildren(node.children ?? [], state)}</blockquote>`;
     case "list": {
@@ -207,6 +210,8 @@ async function renderInline(node, state) {
       return `<del>${await renderInlineChildren(node.children ?? [], state)}</del>`;
     case "inlineCode":
       return `<code class="mdv-inline-code">${renderInlineDiffValue(node.value, node.data?.mdviewInlineDiffRanges)}</code>`;
+    case "inlineMath":
+      return `<span class="mdv-math mdv-math-inline">${renderMathDiff(node, false)}</span>`;
     case "link":
       return `<a href="${safeHref(node.url)}" rel="noreferrer">${await renderInlineChildren(node.children ?? [], state)}</a>`;
     case "image":
@@ -218,6 +223,27 @@ async function renderInline(node, state) {
     default:
       if (node.children) return renderInlineChildren(node.children, state);
       return typeof node.value === "string" ? escape(node.value) : "";
+  }
+}
+
+function renderMathDiff(node, displayMode) {
+  const rendered = renderMath(node.value, displayMode);
+  if (!node.data?.mdviewInlineDiffRanges?.length) return rendered;
+  const tag = displayMode ? "div" : "span";
+  return `<${tag} class="mdv-inline-diff">${rendered}</${tag}>`;
+}
+
+function renderMath(value, displayMode) {
+  try {
+    return katex.renderToString(value, {
+      displayMode,
+      output: "htmlAndMathml",
+      strict: "warn",
+      throwOnError: false,
+      trust: false,
+    });
+  } catch {
+    return `<code class="mdv-math-error">${escape(value)}</code>`;
   }
 }
 

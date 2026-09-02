@@ -5,10 +5,11 @@ import { branchDisplay, resolveGitRepositoryContext, worktreeLabel } from "./cod
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { visit } from "unist-util-visit";
 
 const execFileAsync = promisify(execFile);
-const parser = unified().use(remarkParse).use(remarkGfm);
+const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 
 async function git(args, cwd) {
   try {

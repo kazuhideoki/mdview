@@ -188,7 +188,7 @@
 @layer prose {
   .mdv-document { position: relative; width: min(1090px, calc(100vw - var(--mdv-sidebar))); margin: 0; padding: 58px 36px 110px 72px; font-size: var(--mdv-font-size); line-height: 1.78; }
   .mdv-document-body { width: 100%; max-width: none; }
-  .mdv-document-body > :not(.mdv-code, .mdv-table-wrap, .mdv-diagram, .mdv-raw-html) { max-width: var(--mdv-measure); }
+  .mdv-document-body > :not(.mdv-code, .mdv-table-wrap, .mdv-diagram, .mdv-math-display, .mdv-raw-html) { max-width: var(--mdv-measure); }
   .mdv-heading { position: relative; margin: 1em 0 .5em; color: #efede7; font-weight: 560; line-height: 1.35; letter-spacing: .012em; scroll-margin-top: 85px; }
   h1.mdv-heading { margin-top: 0; margin-bottom: .24em; font-size: clamp(32px, 3vw, 43px); font-weight: 610; letter-spacing: .025em; }
   h2.mdv-heading { font-size: 25px; }
@@ -200,6 +200,11 @@
   .mdv-document em { color: #d8b766; }
   .mdv-document a { text-underline-offset: 3px; }
   .mdv-document img { max-width: 100%; height: auto; border-radius: 5px; }
+  .mdv-math { color: var(--mdv-fg); }
+  .mdv-math-inline { white-space: nowrap; }
+  .mdv-math-display { position: relative; max-width: 100%; margin: 1.5em 0; padding: .35em 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
+  .mdv-math-display > .katex-display { margin: 0; }
+  .mdv-math-error { color: #e3aa62; font-family: var(--mdv-font-mono); }
   .mdv-inline-code { padding: .12em .35em; color: #d8b766; border: 1px solid #393a37; border-radius: 3px; background: #1b1c1b; font-family: var(--mdv-font-mono); font-size: .9em; }
   .mdv-list { position: relative; margin: .3em 0 1.5em; padding-left: 1.55em; color: #cdcbc5; }
   .mdv-list li { padding-left: .25em; margin: 0; }
